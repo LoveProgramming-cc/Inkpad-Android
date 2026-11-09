@@ -89,7 +89,7 @@ class DocumentTest {
         Clock.override = null
     }
 
-    private fun sampleDocument(): Document {
+    fun sampleDocument(): Document {
         val doc = Document(Template(595.0, 842.0, "grid", rgb(0.976, 0.965, 0.902)))
         val page = doc.pages[0]
         val tape = Stroke("tape", rgb(0.96, 0.82, 0.36), 16.0, listOf(pt(50.0, 300.0), pt(200.0, 300.0)))
