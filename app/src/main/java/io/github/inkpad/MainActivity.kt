@@ -126,6 +126,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        preferFastestRefresh()
         Files.activity = this
         Icons.load(this)
         I18n.use(this, app.settings["language"] as? String ?: "auto")
@@ -139,6 +140,8 @@ class MainActivity : ComponentActivity() {
                 androidx.compose.runtime.SideEffect {
                     androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = !lightIcons
                 }
+                // A new language is a new interface: every text is looked up again.
+                androidx.compose.runtime.key(m.settings["language"]) {
                 Box(Modifier.fillMaxSize().background(p.viewBg)) {
                     val s = m.session
                     if (s != null) EditorScreen(m, s) else LibraryScreen(m)
@@ -158,6 +161,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+                }
             }
         }
         handle(intent)
@@ -165,7 +169,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (packageName.endsWith(".test") && intent.hasExtra("selftest_zoom")) {
+            // Trial builds: adb shell am start -n …/io.github.inkpad.MainActivity --ef selftest_zoom 0.4 --el ms 2400
+            io.github.inkpad.editor.PageCanvas.current?.get()?.selfTestZoom(intent.getFloatExtra("selftest_zoom", 0.4f).toDouble(), intent.getLongExtra("ms", 2400))
+            return
+        }
         handle(intent)
+    }
+
+    /** A pen wants the screen's fastest refresh (144 Hz on the vivo Pad5 Pro); some systems give an
+     *  app only 60 unless it asks. The same resolution, the highest rate. */
+    private fun preferFastestRefresh() {
+        val d = display ?: return
+        val now = d.mode
+        val best = d.supportedModes.filter { it.physicalWidth == now.physicalWidth && it.physicalHeight == now.physicalHeight }.maxByOrNull { it.refreshRate } ?: return
+        window.attributes = window.attributes.also { it.preferredDisplayModeId = best.modeId }
     }
 
     /** A file handed to the app from outside: a notebook, a PDF or a Goodnotes document. */

@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -59,15 +60,16 @@ fun Label(text: String, size: Float = 15f, weight: FontWeight = FontWeight.Norma
 }
 
 /** Places a popover below its anchor, or above when there is no room, and keeps it on screen. */
-private class Below(val gap: Int) : PopupPositionProvider {
+private class Below(val gap: Int, val margin: Int) : PopupPositionProvider {
     override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
-        var x = anchorBounds.center.x - popupContentSize.width / 2
-        x = x.coerceIn(8, maxOf(8, windowSize.width - popupContentSize.width - 8))
+        // Placed by its card: the content is the card with a clear margin all round.
+        val w = popupContentSize.width - 2 * margin
+        val h = popupContentSize.height - 2 * margin
+        var x = anchorBounds.center.x - w / 2
+        x = x.coerceIn(8, maxOf(8, windowSize.width - w - 8))
         var y = anchorBounds.bottom + gap
-        if (y + popupContentSize.height > windowSize.height - 8 && anchorBounds.top - gap - popupContentSize.height > 8) {
-            y = anchorBounds.top - gap - popupContentSize.height
-        }
-        return IntOffset(x, y.coerceAtLeast(8))
+        if (y + h > windowSize.height - 8 && anchorBounds.top - gap - h > 8) y = anchorBounds.top - gap - h
+        return IntOffset(x - margin, y.coerceAtLeast(8) - margin)
     }
 }
 
@@ -75,17 +77,24 @@ private class Below(val gap: Int) : PopupPositionProvider {
 @Composable
 fun PopoverCard(content: @Composable ColumnScope.() -> Unit) {
     val p = palette
-    Column(
-        Modifier
-            .shadow(16.dp, RoundedCornerShape(16.dp))
-            .background(p.popoverBg, RoundedCornerShape(16.dp))
-            .border(1.dp, Color.Black.copy(alpha = 0.06f), RoundedCornerShape(16.dp))
-            .heightIn(max = 640.dp)
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 6.dp, horizontal = 6.dp),
-        content = content,
-    )
+    // A popup is a window of its own, as big as what it holds: the margin gives the shadow room
+    // to fade out, where it would otherwise be cut off at the window's edge in a hard band.
+    Box(Modifier.padding(POPOVER_MARGIN)) {
+        Column(
+            Modifier
+                .shadow(10.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black.copy(alpha = 0.12f), spotColor = Color.Black.copy(alpha = 0.22f))
+                .background(p.popoverBg, RoundedCornerShape(16.dp))
+                .border(1.dp, Color.Black.copy(alpha = 0.06f), RoundedCornerShape(16.dp))
+                .heightIn(max = 640.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 6.dp, horizontal = 6.dp),
+            content = content,
+        )
+    }
 }
+
+/** The clear margin round a popover's card (see [PopoverCard]). */
+val POPOVER_MARGIN = 14.dp
 
 /** A button that opens a popover; the content gets a function that closes it. */
 @Composable
@@ -98,7 +107,7 @@ fun PopButton(
         label { open = true }
         if (open) {
             val density = androidx.compose.ui.platform.LocalDensity.current
-            Popup(popupPositionProvider = Below(with(density) { 6.dp.roundToPx() }), onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
+            Popup(popupPositionProvider = Below(with(density) { 6.dp.roundToPx() }, with(density) { POPOVER_MARGIN.roundToPx() }), onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
                 PopoverCard { content { open = false } }
             }
         }
@@ -108,10 +117,14 @@ fun PopButton(
 /** A popover shown at a point of the screen (a long press, the selection). */
 @Composable
 fun PopAt(x: Int, y: Int, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val m = with(androidx.compose.ui.platform.LocalDensity.current) { POPOVER_MARGIN.roundToPx() }
     Popup(popupPositionProvider = object : PopupPositionProvider {
-        override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) =
-            IntOffset((x - popupContentSize.width / 2).coerceIn(8, maxOf(8, windowSize.width - popupContentSize.width - 8)),
-                (if (y + popupContentSize.height > windowSize.height - 8) y - popupContentSize.height else y).coerceAtLeast(8))
+        override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+            val w = popupContentSize.width - 2 * m
+            val h = popupContentSize.height - 2 * m
+            return IntOffset((x - w / 2).coerceIn(8, maxOf(8, windowSize.width - w - 8)) - m,
+                (if (y + h > windowSize.height - 8) y - h else y).coerceAtLeast(8) - m)
+        }
     }, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true)) {
         PopoverCard(content)
     }
@@ -265,16 +278,20 @@ fun Toast(text: String, button: String?, onButton: () -> Unit) {
 @Composable
 fun Switch(on: Boolean, onChange: (Boolean) -> Unit) {
     val p = palette
+    // The knob slides across and the track's colour follows, as GNOME's and iOS's switches do.
+    val spec = androidx.compose.animation.core.tween<Float>(180, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+    val t by androidx.compose.animation.core.animateFloatAsState(if (on) 1f else 0f, spec, label = "switch")
+    val track = androidx.compose.ui.graphics.lerp(p.ink(0.2f), p.accent, t)
     Box(
         Modifier
             .size(46.dp, 26.dp)
             .clip(CircleShape)
-            .background(if (on) p.accent else p.ink(0.2f))
+            .background(track)
             .clickable { onChange(!on) }
             .padding(3.dp),
-        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+        contentAlignment = Alignment.CenterStart,
     ) {
-        Box(Modifier.size(20.dp).shadow(2.dp, CircleShape).background(Color.White, CircleShape))
+        Box(Modifier.offset(x = 20.dp * t).size(20.dp).shadow(2.dp, CircleShape).background(Color.White, CircleShape))
     }
 }
 
@@ -306,6 +323,7 @@ fun SettingGroup(title: String?, content: @Composable ColumnScope.() -> Unit) {
         Column(
             Modifier
                 .fillMaxWidth()
+                .shadow(1.dp, RoundedCornerShape(12.dp), ambientColor = Color.Black.copy(alpha = 0.06f), spotColor = Color.Black.copy(alpha = 0.10f))
                 .background(p.cardBg, RoundedCornerShape(12.dp))
                 .border(1.dp, p.ink(0.07f), RoundedCornerShape(12.dp)),
             content = content,

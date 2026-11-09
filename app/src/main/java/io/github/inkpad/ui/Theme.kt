@@ -57,7 +57,7 @@ class Palette(val dark: Boolean) {
     val mark = Color(0xFFE5484D)
     val ink = if (dark) Color(0xFFFFFFFF) else Color(0xFF1E1E22)
     val viewBg = if (dark) Color(0xFF1D1D20) else Color(0xFFFFFFFF)
-    val windowBg = if (dark) Color(0xFF222226) else Color(0xFFFAFAFB)
+    val windowBg = if (dark) Color(0xFF222226) else Color(0xFFF2F2F4)   // a shade under the white cards, so they stand out
     val sidebarBg = if (dark) Color(0xFF2E2E32) else Color(0xFFEBEBED)
     val popoverBg = if (dark) Color(0xFF36363A) else Color(0xFFFFFFFF)
     val cardBg = if (dark) Color(0xFF3F3F44) else Color(0xFFFFFFFF)

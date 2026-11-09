@@ -212,6 +212,37 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
 
     fun log(text: String) {
         if (inputLog) host.log("%.3f %s".format(mono() / 1000.0, text))
+        if (TRIAL) android.util.Log.i("InkpadInput", text)
+    }
+
+    /** The trial build (beside the real app, for trying things on a tablet) also logs to logcat. */
+    private val TRIAL = context.packageName.endsWith(".test")
+
+    /** Trial builds only: zoom out to [factor] and back over [ms], as two fingers would, so that
+     *  frame times can be measured on a tablet (adb cannot pinch). */
+    fun selfTestZoom(factor: Double, ms: Long) {
+        if (!TRIAL || doc == null) return
+        val z0 = zoom
+        val a = anchor(W / 2, H / 2)
+        val t0 = mono()
+        log("self-test zoom: from ${"%.3f".format(z0)} by $factor over $ms ms")
+        postOnAnimation(object : Runnable {
+            override fun run() {
+                val t = (mono() - t0).toDouble() / ms
+                if (t >= 1) {
+                    place(z0, a, W / 2, H / 2, keepPage = false)
+                    log("self-test zoom: done")
+                    return
+                }
+                val f = 1 + (factor - 1) * sin(Math.PI * t)
+                place(clamp(z0 * f, minZoom(), maxZoomNow()), a, W / 2, H / 2, keepPage = false)
+                postOnAnimation(this)
+            }
+        })
+    }
+
+    init {
+        if (TRIAL) current = java.lang.ref.WeakReference(this)
     }
 
     fun setDocument(d: Document) {
@@ -636,7 +667,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     }
 
     /** Show the document at [zz] with the anchored page point under view point (x, y). */
-    internal fun place(zz: Double, a: Triple<Int, Double, Double>, x: Double, y: Double) {
+    internal fun place(zz: Double, a: Triple<Int, Double, Double>, x: Double, y: Double, keepPage: Boolean = true) {
         val (i, fx, fy) = a
         val d = doc!!
         if (i >= d.pages.size) return
@@ -649,7 +680,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         val (l, t) = origin(i)
         val k = z(page)
         want = doubleArrayOf(l + fx * page.w * k - x, t + fy * page.h * k - y)
-        if (across()) {
+        if (across() && keepPage) {
             // One page at a time: zooming about a point near the edge must not bring the next page in beside this one.
             val (lo, hi) = span(i)
             want[0] = clamp(want[0], lo, hi)
@@ -760,8 +791,11 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         val ssx = full.first / page.w
         val ssy = full.second / page.h
         val (x0, y0, x1, y1) = visible(i)
-        val mx = (x1 - x0) * 0.4
-        val my = (y1 - y0) * 0.4
+        // Room to pan before a new window is drawn. A board's window is the whole view and more,
+        // and every new one goes to the GPU in one piece: a smaller margin uploads much less.
+        val margin = if (board) 0.2 else 0.4
+        val mx = (x1 - x0) * margin
+        val my = (y1 - y0) * margin
         if (board) {   // no edges to stop at; the window may lie anywhere
             val wx0 = floor((x0 - mx) * ssx / STRIP) * STRIP
             val wy0 = floor((y0 - my) * ssy / STRIP) * STRIP
@@ -788,23 +822,15 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         val full = fullSize(page)
         val entry = cache[page]
         if (entry != null && entry.full == full && covers(intArrayOf(entry.ox, entry.oy, entry.pw, entry.ph), page, i, full)) return entry
-        if (page.pdf == null) return build(page, full, window(page, i, full), null)
+        if (page.pdf == null) {
+            // Drawn on the renderer thread, the old picture stretched meanwhile (after a zoom, or
+            // when the view leaves the drawn window): a full page drawn here would hold up the
+            // fingers for a good part of a second.
+            requestInk(page, i, full, 0)
+            return entry   // none yet: the paper colour shows until it is drawn
+        }
         requestBg(page, i, full, 0)
         return cache[page] ?: entry   // stale or missing until the renderer delivers
-    }
-
-    private fun build(page: Page, full: Pair<Int, Int>, win: IntArray, bg: Bitmap?): Entry? {
-        val old = cache[page]
-        val bmp = try {
-            Bitmap.createBitmap(max(1, win[2]), max(1, win[3]), Bitmap.Config.ARGB_8888)
-        } catch (e: OutOfMemoryError) {
-            return old
-        }
-        val entry = Entry(bmp, full, win[0], win[1], win[2], win[3], full.first / page.w, full.second / page.h, bg)
-        cache[page] = entry
-        repaint(entry, page, null)
-        if (old != null && old !== entry) old.bitmap.recycle()
-        return entry
     }
 
     /** Redraw the cached raster inside rect (page points), or all of it. */
@@ -895,6 +921,9 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     private fun bgKey(page: Page, full: Pair<Int, Int>, win: IntArray) = "${System.identityHashCode(page)}:${full.first}x${full.second}@${win.joinToString(",")}"
 
     private fun requestBg(page: Page, i: Int, full: Pair<Int, Int>, priority: Int) {
+        // Its background is here and the ink is being put on it: nothing more to ask for.
+        val ink = inkPending[page]
+        if (ink?.bg != null && ink.full == full && covers(ink.win, page, i, full)) return
         val p = pending[page]
         if (p != null && p.full == full && (priority > 0 || covers(p.win, page, i, full))) return
         val win = window(page, i, full)
@@ -903,7 +932,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             // Rendered before and still remembered: no waiting, no white page.
             bgs[key] = ready
             pending.remove(page)
-            build(page, full, win, ready)
+            requestInk(page, i, full, priority, win, ready)
             return
         }
         val mark = BgMark(full, win, key)
@@ -919,6 +948,67 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             bmp
         }, done = { bg -> bgReady(page, mark, bg) }))
         pump()
+    }
+
+    private class InkMark(val full: Pair<Int, Int>, val win: IntArray, val rev: Int, val hidden: Set<Item>?, val bg: Bitmap?)
+
+    private val inkPending = IdentityHashMap<Page, InkMark>()
+
+    /** Draw page i's ink and paper anew, at [full], off the main thread. */
+    private fun requestInk(page: Page, i: Int, full: Pair<Int, Int>, priority: Int, bgWin: IntArray? = null, bg: Bitmap? = null) {
+        val p = inkPending[page]
+        if (bg == null && p != null && p.full == full && p.rev == page.rev && p.hidden === hidden && covers(p.win, page, i, full)) return
+        val win = bgWin ?: window(page, i, full)
+        val items = page.items.toList()   // the page may change while this is drawn: a copy of the list
+        val hid = hidden
+        val hidCopy = hid?.let { identity(it) }
+        val mark = InkMark(full, win, page.rev, hid, bg)
+        inkPending[page] = mark
+        jobs.add(Job(priority, jobSeq++, valid = {
+            if (inkPending[page] !== mark) false
+            else if (!near(page)) { inkPending.remove(page); false }
+            else true
+        }, run = {
+            val bmp = Bitmap.createBitmap(max(1, win[2]), max(1, win[3]), Bitmap.Config.ARGB_8888)
+            val cv = Canvas(bmp)
+            val ssx = full.first / page.w
+            val ssy = full.second / page.h
+            val env = Env(win[0] / ssx, win[1] / ssy, 1 / ssx, inkOn(page))
+            cv.scale(ssx.toFloat(), ssy.toFloat())
+            val box = doubleArrayOf(win[0] / ssx, win[1] / ssy, (win[0] + win[2]) / ssx, (win[1] + win[3]) / ssy)
+            if (bg != null) {
+                cv.save()
+                cv.scale((1 / ssx).toFloat(), (1 / ssy).toFloat())
+                cv.drawBitmap(bg, 0f, 0f, null)   // the PDF page, rendered for this very window
+                cv.restore()
+            } else drawPaper(cv, env, page, box)
+            for (it in items) {
+                if (hidCopy != null && it in hidCopy) continue
+                if (Geom.intersects(it.bbox, box)) drawItem(cv, env, it)
+            }
+            bmp
+        }, done = { bmp -> inkReady(page, mark, bmp) }))
+        pump()
+    }
+
+    private fun inkReady(page: Page, mark: InkMark, bmp: Bitmap) {
+        if (inkPending[page] !== mark) {
+            bmp.recycle()
+            return
+        }
+        inkPending.remove(page)
+        if (index(page) == null || page.rev != mark.rev || hidden !== mark.hidden) {
+            // The page changed while it was drawn (its old picture has the change): draw it again.
+            bmp.recycle()
+            val i = index(page)
+            if (i != null && mark.bg != null) requestInk(page, i, mark.full, 0, mark.win, mark.bg)
+            invalidate()
+            return
+        }
+        val old = cache[page]
+        cache[page] = Entry(bmp, mark.full, mark.win[0], mark.win[1], mark.win[2], mark.win[3], mark.full.first / page.w, mark.full.second / page.h, mark.bg)
+        if (old != null) old.bitmap.recycle()
+        invalidate()
     }
 
     private fun pump() {
@@ -952,21 +1042,22 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         }
         if (pending[page] !== mark) return
         pending.remove(page)
-        if (index(page) != null) {
-            build(page, mark.full, mark.win, bg)
-            invalidate()
-        }
+        // The ink goes on top on the renderer thread as well: an annotated page is as slow to
+        // draw as a page of notes.
+        index(page)?.let { requestInk(page, it, mark.full, 0, mark.win, bg) }
     }
 
     /** Render the pages just outside the view ahead of time, so scrolling meets no blanks. */
     private fun prefetch(first: Int, last: Int) {
         val pages = doc!!.pages
         listOf(last + 1, first - 1, last + 2).forEachIndexed { step, i ->
-            if (i in pages.indices && pages[i].pdf != null) {
+            if (i in pages.indices) {
                 val page = pages[i]
                 val full = fullSize(page)
                 val entry = cache[page]
-                if (full.first.toLong() * full.second <= MAX_PIXELS && (entry == null || entry.full != full)) requestBg(page, i, full, 1 + step)
+                if (full.first.toLong() * full.second <= MAX_PIXELS && (entry == null || entry.full != full)) {
+                    if (page.pdf != null) requestBg(page, i, full, 1 + step) else requestInk(page, i, full, 1 + step)
+                }
             }
         }
     }
@@ -1122,7 +1213,8 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     private var fling: Runnable? = null
     private var penForce = true                 // the pen in use tells how hard it is pressed
 
-    private class PenState(var n: Int = 0, var first: Double = 0.0, var varying: Boolean = false, var t: Long = 0, var at: Pair<Double, Double> = Pair(0.0, 0.0))
+    private class PenState(var n: Int = 0, var first: Double = 0.0, var varying: Boolean = false, var t: Long = 0, var at: Pair<Double, Double> = Pair(0.0, 0.0), var last: Double = 0.0)
+    private var penAxis = false   // the pen's device has a pressure axis
 
     class TouchGesture(
         var n: Int, var cx: Double, var cy: Double, var span: Double, var zoom: Double, var draw: Boolean, var moved: Boolean,
@@ -1132,6 +1224,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         var ruler: Ruler? = null
         var turn: Double? = null
         var grab: String? = null   // "move", "copy" or "held"
+        var zooming = false        // two fingers have spread or closed enough to zoom
     }
 
     private fun kindOf(e: MotionEvent, i: Int): String = when (e.getToolType(i)) {
@@ -1145,10 +1238,26 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         val action = e.actionMasked
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                if (action == MotionEvent.ACTION_DOWN && (touches.isNotEmpty() || tg != null)) {
+                    // The first finger down, yet fingers are remembered: their lift never came.
+                    // Left in, one finger would be taken for a pinch with a finger long gone.
+                    log("forgetting ${touches.size} touch(es) whose lift never came")
+                    touches.clear()
+                    rejected.clear()
+                    tg = null
+                }
                 val i = e.actionIndex
                 pointerDown(e, i)
             }
             MotionEvent.ACTION_MOVE -> {
+                if (touches.isNotEmpty()) {
+                    val ids = HashSet<Int>()
+                    for (i in 0 until e.pointerCount) ids.add(e.getPointerId(i))
+                    if (touches.keys.retainAll(ids)) {
+                        log("forgetting touches the system no longer reports")
+                        touchReset(e.x / dev, e.y / dev)
+                    }
+                }
                 for (i in 0 until e.pointerCount) pointerMove(e, i)
                 if (tg != null) touchUpdate()
             }
@@ -1167,6 +1276,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
 
     private fun pointerDown(e: MotionEvent, i: Int) {
         val (x, y) = px(e, i)
+        if (TRIAL) log("down: ${kindOf(e, i)} id ${e.getPointerId(i)} tool ${e.getToolType(i)} at ${x.roundToInt()},${y.roundToInt()} size ${"%.2f".format(e.getTouchMajor(i))} pressure ${"%.3f".format(e.getPressure(i))} flags ${e.flags}")
         when (kindOf(e, i)) {
             "pen" -> penDownEvent(e, i, x, y)
             "touch" -> touchDown(e.getPointerId(i), x, y)
@@ -1264,13 +1374,21 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         // A pen without a pressure sensor reports the same force all the time. It is known by
         // that, and its line is then shaped by speed alone, as a mouse's is.
         st.n++
+        if (penAxis) {
+            // A pen that reports a pressure axis is taken at its word (B:canvas.py). A sample
+            // without pressure (the first one often has none, and the odd one later) keeps the
+            // pressure before it: guessing from speed there makes a blot where the line starts.
+            if (pressure > 0) st.last = clamp(pressure, 0.02, 1.0)
+            return if (st.last > 0) st.last else 0.3
+        }
+        // A pen without a pressure sensor reports the same force all the time. It is known by
+        // that, and its line is then shaped by speed alone, as a mouse's is.
         if (st.n == 1) st.first = pressure
         else if (!st.varying && abs(pressure - st.first) > 0.02) {
             st.varying = true
             penForce = true
         } else if (!st.varying && st.n == 12) penForce = false
         if (!penForce || pressure <= 0) return clamp(0.5 + (mouseP - 0.5) * 2, 0.0, 1.0)
-        // A tablet's pen is taken at its word (B:canvas.py).
         return clamp(pressure, 0.02, 1.0)
     }
 
@@ -1294,6 +1412,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         src = "pen"
         penAt = Pair(x, y)
         pst = PenState(t = e.eventTime, at = Pair(x, y))
+        penAxis = (e.device?.getMotionRange(MotionEvent.AXIS_PRESSURE, e.source)?.range ?: 0f) > 0f
         mouseP = 0.5
         hover = null
         down(x, y, penPressure(e.getPressure(i).toDouble(), e.eventTime), erase)
@@ -1310,6 +1429,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         }
         val (x, y) = px(e, i)
         penAt = Pair(x, y)
+        if (TRIAL) log("pen move: pressure ${"%.3f".format(e.getPressure(i))} history ${e.historySize}")
         move(x, y, penPressure(e.getPressure(i).toDouble(), e.eventTime))
     }
 
@@ -1549,6 +1669,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             old?.page ?: (if (tops.isNotEmpty() && !board) currentPageIndex() else 0),
         )
         tg = g
+        if (TRIAL) log("touch gesture: $n finger(s), zoom ${"%.3f".format(zoom)}, span ${"%.1f".format(sp)}, ids ${touches.keys}")
         if (rulerZone(cx, cy) != null) {
             // Fingers on the ruler handle the ruler: one moves it, two also turn it.
             val pts = touches.values.toList()
@@ -1651,9 +1772,18 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             stopPress()
         }
         var zz = g.zoom
-        if (g.n > 1 && g.span > 12) zz = clamp(zz * sp / g.span, minZoom(), maxZoomNow())
+        if (g.n > 1 && !g.zooming && abs(sp - g.span) > max(24.0, 0.08 * g.span)) {
+            // Two fingers pan without zooming until they clearly spread or close: no hand keeps
+            // its fingers exactly as far apart while it scrolls. From here the zoom follows them.
+            g.zooming = true
+            g.span = sp
+        }
+        if (g.n > 1 && g.zooming && g.span > 12) zz = clamp(zz * sp / g.span, minZoom(), maxZoomNow())
+        if (TRIAL && abs(zz - zoom) > 1e-6) log("zoom ${"%.3f".format(zoom)} -> ${"%.3f".format(zz)} (n ${g.n}, span ${"%.1f".format(g.span)} -> ${"%.1f".format(sp)})")
         // The page point that was between the fingers stays between them.
-        place(zz, g.anchor, cx, cy)
+        // One finger drags the page along, so that letting go far enough turns it; fingers that
+        // zoom keep to the page they hold.
+        place(zz, g.anchor, cx, cy, keepPage = g.n > 1)
         g.over = 0.0
         if (across() && g.n == 1 && g.page < slots.size && span(g.page).second > span(g.page).first + 1) {
             // Zoomed in, a finger moves about inside its page. Past the edge the page gives only a
@@ -1848,5 +1978,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     companion object {
         /** One page of a PDF is rendered at a time, off the main thread, for every canvas. */
         private val RENDERER = Executors.newSingleThreadExecutor { Thread(it, "pdf").apply { isDaemon = true } }
+        /** Trial builds: the canvas on screen, for the self-tests started over adb. */
+        var current: java.lang.ref.WeakReference<PageCanvas>? = null
     }
 }

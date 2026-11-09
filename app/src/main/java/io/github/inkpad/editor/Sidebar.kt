@@ -105,6 +105,7 @@ fun PageThumb(page: Page, w: Int, h: Int, rev: Int = page.rev, modifier: Modifie
 /** Thumbnails in two columns, the outline and the bookmarks (B:sidebar.py). */
 @Composable
 fun Sidebar(ed: EditorState, modifier: Modifier) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val tick = ed.session.tick.intValue
     val p = palette
     var tab by remember { mutableIntStateOf(0) }
@@ -188,6 +189,7 @@ fun pageMenu(ed: EditorState, page: Page): List<MenuItem?> {
  *  zoom level, and a button that brings all of it into view (B:minimap.py). */
 @Composable
 fun Minimap(ed: EditorState, modifier: Modifier) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     ed.session.tick.intValue
     val zoom = ed.zoom
     val p = palette

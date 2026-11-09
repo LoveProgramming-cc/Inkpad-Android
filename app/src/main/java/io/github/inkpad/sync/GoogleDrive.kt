@@ -125,6 +125,14 @@ object GoogleAccount {
      * Run the browser consent flow and store the tokens. Blocks (call it on a thread of its own);
      * the browser is opened on the main thread by [open].
      */
+    /** The port the sign-in in progress waits on for the browser; closing it gives that attempt up. */
+    @Volatile private var waiting: ServerSocket? = null
+
+    fun cancelWaiting() {
+        runCatching { waiting?.close() }
+        waiting = null
+    }
+
     fun authorize(c: Context, open: (Uri) -> Unit, timeoutMs: Int = 300_000) {
         val client = client(c) ?: throw DriveError(tr("尚未提供 Google 客户端凭据"))
         val clientId = client["client_id"] as String
@@ -133,6 +141,7 @@ object GoogleAccount {
         val state = random(16)
         val challenge = Base64.getUrlEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray()))
         ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { server ->
+            waiting = server
             server.soTimeout = timeoutMs
             val redirect = "http://127.0.0.1:${server.localPort}"
             val q = linkedMapOf("client_id" to clientId, "redirect_uri" to redirect, "response_type" to "code", "scope" to SCOPE,

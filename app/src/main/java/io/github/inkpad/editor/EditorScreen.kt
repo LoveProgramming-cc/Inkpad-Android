@@ -529,6 +529,7 @@ private fun HeaderButton(checked: Boolean = false, onClick: () -> Unit, content:
 
 @Composable
 private fun Header(ed: EditorState, compact: Boolean) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val app = ed.app
     Column(Modifier.background(p.header).statusBarsPadding()) {
@@ -587,6 +588,7 @@ private fun Header(ed: EditorState, compact: Boolean) {
 
 @Composable
 private fun ToolGroup(ed: EditorState) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val hidden = ed.st.strings("hidden_tools").toSet()
     Row(Modifier.background(Color.White.copy(alpha = 0.10f), RoundedCornerShape(13.dp)).padding(3.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -607,6 +609,7 @@ private fun ToolGroup(ed: EditorState) {
 
 @Composable
 private fun Floating(ed: EditorState, compact: Boolean) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     ed.session.tick.intValue
     Box(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 10.dp), verticalAlignment = Alignment.Top) {
@@ -789,6 +792,7 @@ private fun Note(text: String) {
 
 @Composable
 private fun Group(ed: EditorState, key: String, entries: List<Pair<Long, @Composable () -> Unit>>) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val current = ed.st.int(key).toLong()
     for ((value, look) in entries) {
         PillButton(checked = value == current, onClick = {
@@ -800,6 +804,7 @@ private fun Group(ed: EditorState, key: String, entries: List<Pair<Long, @Compos
 
 @Composable
 private fun GroupStr(ed: EditorState, key: String, entries: List<Pair<String, String>>) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val current = ed.st.str(key)
     for ((value, icon) in entries) {
         PillButton(checked = value == current, onClick = {
@@ -811,6 +816,7 @@ private fun GroupStr(ed: EditorState, key: String, entries: List<Pair<String, St
 
 @Composable
 private fun PenWeights(ed: EditorState) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val pen = ed.pen()
     @Suppress("UNCHECKED_CAST")
     Weights(ed, pen, "slot", pen["widths"] as MutableList<Any?>, 0.3, 8.0, 1.3, hl = false)
@@ -819,6 +825,7 @@ private fun PenWeights(ed: EditorState) {
 /** Thickness presets: tap to select, tap the selected one to set its width. */
 @Composable
 private fun Weights(ed: EditorState, target: MutableMap<String, Any?>, key: String, widths: MutableList<Any?>, low: Double, high: Double, look: Double, hl: Boolean) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val current = (target[key] as Number).toInt()
     widths.forEachIndexed { i, w0 ->
         val w = (w0 as Number).toDouble()
@@ -838,6 +845,7 @@ private fun Weights(ed: EditorState, target: MutableMap<String, Any?>, key: Stri
 /** Colour slots: tap to select, tap the selected one to change or remove it, + adds one. */
 @Composable
 private fun ColorSlots(ed: EditorState, colorsKey: String, indexKey: String) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val colors = ed.st.colors(colorsKey)
     val current = ed.st.int(indexKey)
     colors.forEachIndexed { i, c ->
@@ -1051,6 +1059,7 @@ private fun WidthPanel(ed: EditorState, widths: MutableList<Any?>, slot: Int, lo
 
 @Composable
 private fun PalettePanel(ed: EditorState, colorsKey: String, indexKey: String, add: Boolean, close: () -> Unit) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val st = ed.st
     @Suppress("UNCHECKED_CAST")
     val colors = st[colorsKey] as MutableList<Any?>
@@ -1175,6 +1184,7 @@ private fun LassoPanel(ed: EditorState) {
 
 @Composable
 private fun SelectionBar(ed: EditorState) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     ed.selTick.intValue
     val rect = if (ed.hasCanvas) ed.canvas.selectionRect() else null
     if (rect == null) return
@@ -1225,6 +1235,7 @@ private fun SelectionBar(ed: EditorState) {
 
 @Composable
 private fun CanvasMenu(ed: EditorState, x: Double, y: Double) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val c = ed.canvas
     val density = LocalDensity.current.density
     val rect = c.selectionRect()
@@ -1249,6 +1260,7 @@ private fun CanvasMenu(ed: EditorState, x: Double, y: Double) {
 
 @Composable
 private fun FindBar(ed: EditorState, modifier: Modifier) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     Pill(modifier) {
         Icon("search", palette.ink(0.5f), 16.dp)
         Box(Modifier.width(220.dp)) {
@@ -1269,6 +1281,7 @@ private fun FindBar(ed: EditorState, modifier: Modifier) {
 
 @Composable
 private fun AddPagePanel(ed: EditorState, close: () -> Unit) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     val st = ed.st
     val page = ed.currentPage()
     var pos by remember { mutableStateOf(st.str("add_pos")) }
@@ -1309,6 +1322,7 @@ private fun AddPagePanel(ed: EditorState, close: () -> Unit) {
  *  after an action, so the result can be watched and the action repeated. */
 @Composable
 private fun PagePanel(ed: EditorState, close: () -> Unit) {
+    ed.optionsTick.intValue   // the settings are a plain map: this is what redraws it
     ed.session.tick.intValue
     var tick by remember { mutableIntStateOf(0) }
     tick.let { }

@@ -294,6 +294,7 @@ class LibraryState(val app: AppModel) {
 
 @Composable
 fun LibraryScreen(app: AppModel) {
+    app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val lib = remember { LibraryState(app) }
     val p = palette
     app.libraryTick.intValue
@@ -360,6 +361,7 @@ fun LibraryScreen(app: AppModel) {
 
 @Composable
 private fun Nav(lib: LibraryState, modifier: Modifier) {
+    lib.app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     Column(
         modifier
@@ -403,6 +405,7 @@ private fun BasicTextFieldLabel(text: String, modifier: Modifier) {
 
 @Composable
 private fun TopBar(lib: LibraryState, compact: Boolean) {
+    lib.app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val app = lib.app
     Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -444,6 +447,7 @@ private fun TopBar(lib: LibraryState, compact: Boolean) {
 /** The cloud button's menu (B:window.py _cloud_popover). */
 @Composable
 fun CloudMenu(app: AppModel, close: () -> Unit) {
+    app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val context = androidx.compose.ui.platform.LocalContext.current
     Column(Modifier.width(300.dp).padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -491,6 +495,7 @@ fun CloudMenu(app: AppModel, close: () -> Unit) {
 
 @Composable
 private fun Body(lib: LibraryState, compact: Boolean) {
+    lib.app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val app = lib.app
     val entries = lib.entries()
@@ -581,6 +586,7 @@ private fun Pillish(text: String, danger: Boolean = false, onClick: () -> Unit) 
 
 @Composable
 private fun SelectionActions(lib: LibraryState) {
+    lib.app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val app = lib.app
     val store = lib.store
     val any = lib.selected.isNotEmpty()
@@ -618,6 +624,7 @@ private fun Modifier.dropTarget(lib: LibraryState, key: String, folder: File): M
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun Cell(lib: LibraryState, e: Entry) {
+    lib.app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val app = lib.app
     val store = lib.store
@@ -722,6 +729,7 @@ private fun cellMenu(lib: LibraryState, e: Entry): List<MenuItem?> {
 /** What is being dragged, following the finger. */
 @Composable
 private fun DragGhost(lib: LibraryState) {
+    lib.app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     if (lib.dragging.isEmpty()) return
     val d = LocalDensity.current.density
     val f = lib.dragging.first()
@@ -799,6 +807,7 @@ fun FolderArt(color: DoubleArray, icon: String, w: Int = 150, h: Int = 118) {
 /** The colours or the icons a folder can have. */
 @Composable
 private fun FolderStyleDialog(lib: LibraryState, e: Entry, what: String, dismiss: () -> Unit) {
+    lib.app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     DialogCard(dismiss) {
         Label(if (what == "color") tr("自定义颜色") else tr("设置图标"), 17f, FontWeight.Bold)
@@ -828,6 +837,7 @@ private fun FolderStyleDialog(lib: LibraryState, e: Entry, what: String, dismiss
  *  offering a folder that is being moved (or anything inside it). */
 @Composable
 private fun FolderPicker(lib: LibraryState, heading: String, moving: List<File>, done: (File?) -> Unit) {
+    lib.app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val store = lib.store
     val open = remember { mutableStateMapOf<File, Boolean>() }

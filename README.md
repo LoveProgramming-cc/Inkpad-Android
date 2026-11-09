@@ -26,6 +26,12 @@ A release build is signed with the key named in `keystore.properties` at the top
 (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`; not in git), or with the debug key when
 there is none.
 
+`./gradlew :app:assembleTrial` builds `app-trial.apk`: a release build named "Inkpad Test" that
+installs beside the real app with a library of its own, for trying things on a tablet without
+touching the notes there. It also writes the canvas's input log to logcat (tag `InkpadInput`), and
+`adb shell am start -n io.github.inkpad.test/io.github.inkpad.MainActivity --ef selftest_zoom 0.4`
+runs a scripted zoom for measuring frame times (`adb shell dumpsys gfxinfo io.github.inkpad.test`).
+
 Install on a tablet with USB debugging on: `adb install -r app/build/outputs/apk/release/app-release.apk`.
 
 ## How it was made

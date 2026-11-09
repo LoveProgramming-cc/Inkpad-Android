@@ -69,6 +69,7 @@ fun sizeText(bytes: Long): String {
 
 @Composable
 fun SettingsScreen(app: AppModel, close: () -> Unit) {
+    app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val st = app.settings
     val context = LocalContext.current
@@ -185,6 +186,7 @@ fun SettingsScreen(app: AppModel, close: () -> Unit) {
 
 @Composable
 private fun GoogleGroup(app: AppModel, changed: () -> Unit) {
+    app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val context = LocalContext.current
     val p = palette
     var id by remember { mutableStateOf(GoogleAccount.clientId(context)) }
@@ -304,6 +306,7 @@ private fun GoogleGroup(app: AppModel, changed: () -> Unit) {
 /** What was deleted: kept on this device until the cache is cleared, and kept on Drive. */
 @Composable
 private fun StorageManager(app: AppModel, back: () -> Unit) {
+    app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val store = app.store
     var tick by remember { mutableIntStateOf(0) }
