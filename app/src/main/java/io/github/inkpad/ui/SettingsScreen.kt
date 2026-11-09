@@ -122,10 +122,10 @@ fun SettingsScreen(app: AppModel, close: () -> Unit) {
                         )) {
                             SettingRow(tr(title), sub?.let { tr(it) }) { Switch(st[key] == true) { set(key, it) } }
                         }
-                        SettingRow(tr("翻页方向")) {
+                        SettingRow(tr("翻页方向"), tr("左右翻页时，在第一页或最后一页继续拉动可新建一页")) {
                             DropDown(listOf(tr("上下滚动"), tr("左右翻页")), if (st.str("paging") == "horizontal") 1 else 0) { set("paging", if (it == 1) "horizontal" else "vertical") }
                         }
-                        SettingRow(tr("最大放大倍数")) {
+                        SettingRow(tr("最大放大倍数"), tr("按屏幕上实际看到的大小计算，页面再大也能放大到这个程度")) {
                             val zooms = listOf(6.0, 10.0, 20.0, 40.0)
                             DropDown(zooms.map { "${(it * 100).toInt()}%" }, zooms.indexOfFirst { kotlin.math.abs(it - ((st["max_zoom"] as? Number)?.toDouble() ?: 6.0)) < 0.01 }.coerceAtLeast(0)) { set("max_zoom", zooms[it]) }
                         }
@@ -137,7 +137,8 @@ fun SettingsScreen(app: AppModel, close: () -> Unit) {
                         SettingRow(tr("导入存档（.zip）…"), onClick = { Importer.importArchive(app, app.root) }) { Icon("documents") }
                         SettingRow(tr("管理储存空间…"), tr("恢复已删除的笔记"), onClick = { managing = true }) { Icon("chevron_right") }
                     }
-                    SettingGroup(tr("工具栏"), ) {
+                    SettingGroup(tr("工具栏")) {
+                        Label(tr("关掉不用的工具，让工具栏更清爽。"), 13f, color = palette.ink(0.6f), modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp))
                         val hidden = st.strings("hidden_tools")
                         for ((name, label) in TOOL_ROWS) {
                             SettingRow(tr(label)) {
