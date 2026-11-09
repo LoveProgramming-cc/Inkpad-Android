@@ -27,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import dev.chrisbanes.haze.blur.hazeBlur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -153,7 +154,7 @@ fun Pill(modifier: Modifier = Modifier, content: @Composable RowScope.() -> Unit
     Row(
         modifier
             .shadow(10.dp, RoundedCornerShape(18.dp), ambientColor = Color.Black.copy(alpha = 0.1f), spotColor = Color.Black.copy(alpha = 0.2f))
-            .background(p.popoverBg, RoundedCornerShape(18.dp))
+            .glass(RoundedCornerShape(18.dp))
             .border(1.dp, Color.Black.copy(alpha = 0.05f), RoundedCornerShape(18.dp))
             .padding(horizontal = 7.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -217,5 +218,26 @@ fun StatusPill(text: String, modifier: Modifier = Modifier) {
             .border(1.dp, Color.Black.copy(alpha = 0.06f), CircleShape)
             .padding(horizontal = 14.dp, vertical = 5.dp),
         style = TextStyle(fontSize = 13.sp, color = p.ink(0.8f), fontFeatureSettings = "tnum"),
+    )
+}
+
+
+/** The page view the floating bars sit over, when there is one: they show it blurred through. */
+val LocalGlass = androidx.compose.runtime.staticCompositionLocalOf<dev.chrisbanes.haze.HazeState?> { null }
+
+/** Frosted glass: what is behind, blurred and washed with the bar's own colour (Android 12 and up
+ *  draw the blur; elsewhere, or with nothing behind to blur, the bar is plain). */
+@Composable
+fun Modifier.glass(shape: androidx.compose.ui.graphics.Shape): Modifier {
+    val p = palette
+    val state = LocalGlass.current ?: return this.background(p.popoverBg, shape)
+    return this.clip(shape).hazeBlur(
+        dev.chrisbanes.haze.HazeInput.Sources(state),
+        dev.chrisbanes.haze.blur.HazeBlurStyle {
+            blurRadius(22.dp)
+            backgroundColor(p.popoverBg)
+            colorEffects(listOf(dev.chrisbanes.haze.blur.HazeColorEffect.tint(p.popoverBg.copy(alpha = 0.72f))))
+            noiseFactor(0f)
+        },
     )
 }

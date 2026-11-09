@@ -132,11 +132,42 @@ fun PopAt(x: Int, y: Int, onDismiss: () -> Unit, content: @Composable ColumnScop
 
 class MenuItem(val text: String, val icon: String? = null, val danger: Boolean = false, val enabled: Boolean = true, val action: () -> Unit)
 
+/** A choice among a few, as GNOME's combo rows and iOS's menu pickers: the current one with a
+ *  ⌄, and a menu of all of them with a tick by the current one. */
+@Composable
+fun DropDown(labels: List<String>, selected: Int, onPick: (Int) -> Unit) {
+    val p = palette
+    PopButton({ open ->
+        Row(
+            Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = open).padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Label(labels.getOrElse(selected) { "" }, 15f, color = p.ink(0.75f), maxLines = 1)
+            Icon("chevrons_up_down", p.ink(0.5f), 14.dp)
+        }
+    }) { close ->
+        Column(Modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max).widthIn(min = 150.dp, max = 320.dp)) {
+            labels.forEachIndexed { i, t ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).clickable { close(); onPick(i) }.padding(horizontal = 10.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(Modifier.size(16.dp)) { if (i == selected) Icon("check", p.accent, 16.dp) }
+                    Label(t, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
 /** A menu's rows; null is a separator. */
 @Composable
 fun MenuList(items: List<MenuItem?>, close: () -> Unit) {
     val p = palette
-    Column(Modifier.widthIn(min = 200.dp, max = 340.dp)) {
+    // As wide as the longest row, as the other editions' menus are; not a fixed broad card.
+    Column(Modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max).widthIn(min = 150.dp, max = 320.dp)) {
         for (item in items) {
             if (item == null) {
                 Box(Modifier.padding(vertical = 4.dp, horizontal = 8.dp).fillMaxWidth().height(1.dp).background(p.ink(0.1f)))

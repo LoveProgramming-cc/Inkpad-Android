@@ -191,6 +191,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     internal var pull = 0.0
     internal var turning = 0
     internal var want = doubleArrayOf(0.0, 0.0)
+    private var rawWant = doubleArrayOf(0.0, 0.0)   // [want] before it is held to the page side by side
     internal var board = false                   // showing a whiteboard: one page, no edges, free scrolling
     internal val bo = doubleArrayOf(0.0, 0.0)    // its scroll position; any value, either sign
     internal var bat = 0                         // which of the document's boards is shown
@@ -680,6 +681,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         val (l, t) = origin(i)
         val k = z(page)
         want = doubleArrayOf(l + fx * page.w * k - x, t + fy * page.h * k - y)
+        rawWant = want.copyOf()
         if (across() && keepPage) {
             // One page at a time: zooming about a point near the edge must not bring the next page in beside this one.
             val (lo, hi) = span(i)
@@ -1072,13 +1074,16 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         val d = doc
         canvas.drawColor(canvasBg)
         if (d == null || W <= 0 || tops.isEmpty()) return
+        // While two fingers zoom, the page follows them past where it may rest (see [slack]).
+        canvas.save()
+        canvas.translate((slackX * dev).toFloat(), (slackY * dev).toFloat())
         canvas.save()
         canvas.scale(dev.toFloat(), dev.toFloat())
-        val first = pageAt(h(), v())
+        val first = pageAt(h() - slackX, v() - slackY)
         var i = first
         while (i < d.pages.size) {
             val (x, y, w, hh) = pageRect(i)
-            if ((if (across()) x > W else y > H) && !board) break
+            if ((if (across()) x + slackX > W else y + slackY > H) && !board) break
             val page = d.pages[i]
             if (board) {
                 canvas.drawColor(argb(page.color))   // it fills the view
@@ -1118,7 +1123,37 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             }
             canvas.restore()
         }
+        canvas.restore()
         drawBars(canvas)
+    }
+
+    // -- following the fingers past the edges -------------------------------------------------------
+
+    /** How far the content is drawn from where the scroll position puts it, in dp: while two
+     *  fingers zoom, the point between them stays under them even where the view may not rest
+     *  (a page smaller than the window, past an edge), as on iOS; letting go springs it back. */
+    internal var slackX = 0.0
+    internal var slackY = 0.0
+    private var slackAnim: Runnable? = null
+
+    private fun springBack() {
+        slackAnim?.let { removeCallbacks(it) }
+        if (slackX == 0.0 && slackY == 0.0) return
+        val x0 = slackX
+        val y0 = slackY
+        val t0 = mono()
+        val r = object : Runnable {
+            override fun run() {
+                val t = min(1.0, (mono() - t0) / 240.0)
+                val k = 1 - (1 - t) * (1 - t) * (1 - t)   // ease out, as the scroll glides do
+                slackX = x0 * (1 - k)
+                slackY = y0 * (1 - k)
+                invalidate()
+                if (t < 1) postOnAnimation(this) else slackAnim = null
+            }
+        }
+        slackAnim = r
+        postOnAnimation(r)
     }
 
     /** Pages away from the view give their memory back; so does anything over the budget. */
@@ -1560,6 +1595,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     /** The pen is at the screen: whatever touches it now is the hand, so undo what it did. */
     private fun palm() {
         stopFling()
+        springBack()
         if (touches.isEmpty()) return
         rejected.addAll(touches.keys)
         touches.clear()
@@ -1615,6 +1651,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     private fun touchReset(x: Double, y: Double, lifted: Boolean = false) {
         var old = tg
         val n = touches.size
+        springBack()
         stopFling()
         stopPress()
         if (old != null && old.grab != null) {
@@ -1653,8 +1690,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             } else if (old != null && old.moved && !old.draw && old.n == 1 && lifted) {
                 startFling(old.track)
             } else if (old != null && lifted && !old.moved && !old.draw && old.ruler == null && old.n == 1) {
-                if (tool == "lasso") pickAt(x, y)   // with the select tool a tap picks what is under it
-                else toggleTape(x, y)               // a tap
+                fingerTap(x, y)
             }
             return
         }
@@ -1664,7 +1700,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         val g = TouchGesture(
             n, cx, cy, sp, zoom, draw, old != null && old.moved && !old.draw,
             old?.t0 ?: now, arrayListOf(doubleArrayOf(now.toDouble(), cx, cy)),
-            old?.origin ?: doubleArrayOf(zoom, h(), v()), anchor(cx, cy), 0.0,
+            old?.origin ?: doubleArrayOf(zoom, h(), v()), anchor(cx - slackX, cy - slackY), 0.0,
             old?.seen ?: arrayListOf(Pair(now, doubleArrayOf(zoom, h(), v()))),
             old?.page ?: (if (tops.isNotEmpty() && !board) currentPageIndex() else 0),
         )
@@ -1784,6 +1820,11 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         // One finger drags the page along, so that letting go far enough turns it; fingers that
         // zoom keep to the page they hold.
         place(zz, g.anchor, cx, cy, keepPage = g.n > 1)
+        if (g.n > 1 && !board) {
+            slackAnim?.let { removeCallbacks(it); slackAnim = null }
+            slackX = h() - rawWant[0]
+            slackY = v() - rawWant[1]
+        }
         g.over = 0.0
         if (across() && g.n == 1 && g.page < slots.size && span(g.page).second > span(g.page).first + 1) {
             // Zoomed in, a finger moves about inside its page. Past the edge the page gives only a

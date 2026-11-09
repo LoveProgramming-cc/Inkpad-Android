@@ -70,4 +70,7 @@ dependencies {
     implementation("androidx.browser:browser:1.9.0")
     // Putting the original PDF page under the exported ink, as itself (Apache-2.0).
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    // Frosted glass for the bars floating over the page: the page behind them blurred (Apache-2.0).
+    implementation("dev.chrisbanes.haze:haze:2.0.1")
+    implementation("dev.chrisbanes.haze:haze-blur:2.0.1")
 }

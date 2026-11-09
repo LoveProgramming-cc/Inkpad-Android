@@ -1071,7 +1071,7 @@ fun PageCanvas.insertImage(png: ByteArray, width: Int, height: Int, at: Pair<Dou
 // -- text -----------------------------------------------------------------------------------------
 
 /** A box to write in, at the place that was touched; a text box that is there is edited. */
-private fun PageCanvas.editText(i: Int, page: Page, x: Double, y: Double, px: Double, py: Double, note: Boolean) {
+internal fun PageCanvas.editText(i: Int, page: Page, x: Double, y: Double, px: Double, py: Double, note: Boolean) {
     val d = doc!!
     val existing = page.items.lastOrNull { it is Text && Geom.intersects(it.bbox, doubleArrayOf(px, py, px, py)) } as Text?
     val color = penColor.copyOf()
@@ -1088,4 +1088,22 @@ private fun PageCanvas.editText(i: Int, page: Page, x: Double, y: Double, px: Do
             d.addItems(page, listOf(Text(px, py, text, size, color, if (page.board) 400.0 else max(60.0, page.w - px - 12))))
         }
     }
+}
+
+
+/** A tap of a finger (A:fingerTap): tape lifts or goes back (not with the eraser or the select
+ *  tool), the text tools write where it was, the select tool picks what is under it, and any
+ *  other tool lets go of the selection. */
+internal fun PageCanvas.fingerTap(x: Double, y: Double) {
+    val t = tool
+    if (t != "eraser" && t != "lasso" && toggleTape(x, y)) return
+    when (t) {
+        "text", "note" -> {
+            clearSelection()
+            locate(x, y)?.let { (i, px, py) -> editText(i, doc!!.pages[i], x, y, px, py, t == "note") }
+        }
+        "lasso" -> pickAt(x, y)
+        else -> clearSelection()
+    }
+    invalidate()
 }

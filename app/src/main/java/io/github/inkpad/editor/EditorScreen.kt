@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import dev.chrisbanes.haze.hazeSource
 import io.github.inkpad.AppModel
 import io.github.inkpad.EditorSession
 import io.github.inkpad.core.Settings
@@ -465,12 +466,16 @@ fun EditorScreen(app: AppModel, session: EditorSession) {
                         Box(Modifier.width(1.dp).fillMaxHeight().background(p.ink(0.1f)))
                     }
                 }
+                // The page is what the floating bars show blurred through them (frosted glass).
+                val glass = dev.chrisbanes.haze.rememberHazeState()
                 Box(Modifier.fillMaxSize()) {
-                    AndroidView({ canvas }, Modifier.fillMaxSize())
-                    Floating(ed, compact)
-                    SelectionBar(ed)
-                    if (ed.finding) FindBar(ed, Modifier.align(Alignment.TopEnd).padding(top = 62.dp, end = 12.dp))
-                    if (session.doc.pages[0].board) Minimap(ed, Modifier.align(Alignment.BottomStart).padding(14.dp))
+                    AndroidView({ canvas }, Modifier.fillMaxSize().hazeSource(glass))
+                    androidx.compose.runtime.CompositionLocalProvider(io.github.inkpad.ui.LocalGlass provides glass) {
+                        Floating(ed, compact)
+                        SelectionBar(ed)
+                        if (ed.finding) FindBar(ed, Modifier.align(Alignment.TopEnd).padding(top = 62.dp, end = 12.dp))
+                        if (session.doc.pages[0].board) Minimap(ed, Modifier.align(Alignment.BottomStart).padding(14.dp))
+                    }
                     ed.menuAt?.let { (x, y) -> CanvasMenu(ed, x, y) }
                 }
             }
@@ -1405,7 +1410,10 @@ private fun ExportDialog(req: ExportRequest, total: Int, dismiss: () -> Unit) {
             }, tr("全部页面"))
             if (bad) Label(tr("页面范围无法识别"), 13f, color = palette.danger)
         }
-        ChoiceRow(what, listOf(Triple(0, @Composable { Icon("pen") }, tr("笔迹和背景")), Triple(1, @Composable { Icon("highlighter") }, tr("仅笔迹")), Triple(2, @Composable { Icon("grid") }, tr("仅背景")))) { what = it }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Label(tr("导出内容"), 14f, modifier = Modifier.weight(1f))
+            io.github.inkpad.ui.DropDown(listOf(tr("笔迹和背景"), tr("仅笔迹（透明背景）"), tr("仅背景")), what) { what = it }
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             io.github.inkpad.ui.DialogButton(tr("取消"), onClick = dismiss)
             Spacer(Modifier.width(8.dp))

@@ -237,6 +237,7 @@ class Document(template: Template? = null) {
 
     fun displayName(): String = file?.nameWithoutExtension ?: tr("未命名笔记")
 
+
     /** The cover as PNG: the designed one, or the first page shrunk. */
     fun cover(): ByteArray = coverPng ?: (Platform.covers?.invoke(this) ?: BLANK_PNG).also { coverPng = it }
 
@@ -363,6 +364,21 @@ class Document(template: Template? = null) {
     }
 
     companion object {
+        /** The designed cover in a document.json's meta, or null for the first page. */
+        fun coverSpecOf(meta: Map<String, Any?>): Pair<String, Color>? {
+            val cover = meta["cover"] ?: return null
+            val c = cover.arr()
+            // Older files stored a bare colour.
+            return if (c[0] is String) Pair(c[0] as String, c[1].point()) else Pair("simple", cover.point())
+        }
+
+        /** The designed cover of a notebook file, read without loading the notebook. A library
+         *  draws such a cover with the file's present name: the picture stored in the file was
+         *  drawn with the name it had then, and a rename (here, or from another device) does
+         *  not redraw it. */
+        fun coverSpecOf(z: ZipReader): Pair<String, Color>? =
+            runCatching { coverSpecOf(Json.parse(z.text("document.json")).obj()) }.getOrNull()
+
         /** Write the file and return its fileSign(). With [expect], the sign the file had when it
          *  was last read or written, Changed is thrown if something else has written it since. */
         fun writeSnapshot(file: File, snap: Snapshot, expect: String? = null): String = fileLock.withLock {
@@ -461,12 +477,7 @@ class Document(template: Template? = null) {
             doc.gonePages = HashSet((meta["gone"] ?: emptyList<Any?>()).arr().map { it as String })
             doc.orderMt = meta["order_mt"]?.num() ?: 0.0
             doc.resetOrder()
-            val cover = meta["cover"]
-            if (cover != null) {
-                val c = cover.arr()
-                // Older files stored a bare colour.
-                doc.coverSpec = if (c[0] is String) Pair(c[0] as String, c[1].point()) else Pair("simple", cover.point())
-            }
+            doc.coverSpec = coverSpecOf(meta)
             return doc
         }
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -114,8 +115,15 @@ object Covers {
     fun cached(f: File) = cache.get(key(f))
 
     fun load(f: File): ImageBitmap? = cache.get(key(f)) ?: runCatching {
-        val png = ZipReader.open(OpenFile(f)).bytes("cover.png")
-        BitmapFactory.decodeByteArray(png, 0, png.size)?.asImageBitmap()
+        val z = ZipReader.open(OpenFile(f))
+        // A designed cover carries the notebook's name, which is the file's name now, not the one
+        // the stored picture was drawn with (a rename does not redraw it).
+        val spec = io.github.inkpad.core.Document.coverSpecOf(z)
+        if (spec != null) io.github.inkpad.render.renderCover(spec.first, spec.second, f.nameWithoutExtension).asImageBitmap()
+        else {
+            val png = z.bytes("cover.png")
+            BitmapFactory.decodeByteArray(png, 0, png.size)?.asImageBitmap()
+        }
     }.getOrNull()?.also { cache.put(key(f), it) }
 }
 
@@ -309,7 +317,9 @@ fun LibraryScreen(app: AppModel) {
             else -> lib.openFolder(lib.folder.parentFile!!.canonicalFile)
         }
     }
-    BoxWithConstraints(Modifier.fillMaxSize().background(p.viewBg)) {
+    // Focusable itself, and first: when a dialog closes the window gives focus to its first
+    // focusable thing, which would otherwise be the search field (and up comes the keyboard).
+    BoxWithConstraints(Modifier.fillMaxSize().background(p.viewBg).focusable()) {
         val compact = maxWidth < 700.dp
         Row(Modifier.fillMaxSize()) {
             if (!compact) Nav(lib, Modifier.width(250.dp).fillMaxHeight())

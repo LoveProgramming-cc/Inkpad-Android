@@ -97,13 +97,13 @@ fun SettingsScreen(app: AppModel, close: () -> Unit) {
                 Column(Modifier.widthIn(max = 640.dp).fillMaxWidth()) {
                     SettingGroup(tr("外观")) {
                         SettingRow(tr("外观"), tr("页面本身始终保持纸张颜色")) {
-                            Segmented(listOf(tr("跟随系统"), tr("浅色"), tr("深色")), listOf("system", "light", "dark").indexOf(st.str("theme")).coerceAtLeast(0)) {
+                            DropDown(listOf(tr("跟随系统"), tr("浅色"), tr("深色")), listOf("system", "light", "dark").indexOf(st.str("theme")).coerceAtLeast(0)) {
                                 set("theme", listOf("system", "light", "dark")[it])
                             }
                         }
                         SettingRow(tr("语言")) {
                             val langs = listOf("auto" to tr("自动"), "zh" to "中文", "en" to "English", "ja" to "日本語")
-                            Segmented(langs.map { it.second }, langs.indexOfFirst { it.first == st.str("language") }.coerceAtLeast(0)) {
+                            DropDown(langs.map { it.second }, langs.indexOfFirst { it.first == st.str("language") }.coerceAtLeast(0)) {
                                 set("language", langs[it].first)
                                 I18n.use(context, langs[it].first)
                                 app.refreshLibrary()
@@ -123,11 +123,11 @@ fun SettingsScreen(app: AppModel, close: () -> Unit) {
                             SettingRow(tr(title), sub?.let { tr(it) }) { Switch(st[key] == true) { set(key, it) } }
                         }
                         SettingRow(tr("翻页方向")) {
-                            Segmented(listOf(tr("上下滚动"), tr("左右翻页")), if (st.str("paging") == "horizontal") 1 else 0) { set("paging", if (it == 1) "horizontal" else "vertical") }
+                            DropDown(listOf(tr("上下滚动"), tr("左右翻页")), if (st.str("paging") == "horizontal") 1 else 0) { set("paging", if (it == 1) "horizontal" else "vertical") }
                         }
                         SettingRow(tr("最大放大倍数")) {
                             val zooms = listOf(6.0, 10.0, 20.0, 40.0)
-                            Segmented(zooms.map { "${(it * 100).toInt()}%" }, zooms.indexOfFirst { kotlin.math.abs(it - ((st["max_zoom"] as? Number)?.toDouble() ?: 6.0)) < 0.01 }.coerceAtLeast(0)) { set("max_zoom", zooms[it]) }
+                            DropDown(zooms.map { "${(it * 100).toInt()}%" }, zooms.indexOfFirst { kotlin.math.abs(it - ((st["max_zoom"] as? Number)?.toDouble() ?: 6.0)) < 0.01 }.coerceAtLeast(0)) { set("max_zoom", zooms[it]) }
                         }
                     }
                     GoogleGroup(app) { tick++ }
@@ -252,9 +252,8 @@ private fun GoogleGroup(app: AppModel, changed: () -> Unit) {
                 }
             }
         }
-        SettingRow(tr("打开的笔记本多久同步一次"), tr("每隔这么久查看一次其它设备写了什么；自己写的内容在停笔几秒后就会同步，与这里无关")) {}
-        Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-            Segmented(EVERY.map { tr(it.second) }, EVERY.indexOfFirst { it.first == st.int("sync_every") }.coerceAtLeast(3)) {
+        SettingRow(tr("打开的笔记本多久同步一次"), tr("每隔这么久查看一次其它设备写了什么；自己写的内容在停笔几秒后就会同步，与这里无关")) {
+            DropDown(EVERY.map { tr(it.second) }, EVERY.indexOfFirst { it.first == st.int("sync_every") }.coerceAtLeast(3)) {
                 st["sync_every"] = EVERY[it].first.toLong()
                 app.saveSettings()
                 app.watchOpen()

@@ -32,6 +32,11 @@ Software Foundation and Tom Roush, licensed under the Apache License 2.0
 (https://www.apache.org/licenses/LICENSE-2.0). It lays the original PDF page under the ink when a
 notebook made from a PDF is exported.
 
+## Haze (Apache-2.0)
+
+The frosted glass of the bars over the page is drawn with Haze (https://github.com/chrisbanes/haze),
+Copyright Christopher Banes and the Haze project contributors, licensed under the Apache License 2.0.
+
 ## AndroidX and Jetpack Compose (Apache-2.0)
 
 The app is built with AndroidX libraries and Jetpack Compose, Copyright The Android Open Source

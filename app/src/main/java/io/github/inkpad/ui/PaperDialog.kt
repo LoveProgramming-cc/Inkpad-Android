@@ -133,8 +133,8 @@ fun PaperDialog(template: Template, board: Boolean, heading: String, apply: Stri
                 val choices: @Composable () -> Unit = {
                     Column(Modifier.fillMaxWidth()) {
                         FlowRow(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (!board) Segmented(SIZES.map { it.first }, size) { size = it }
-                            Segmented(PAPER_COLORS.map { tr(it.first) }, color) { color = it }
+                            if (!board) DropDown(SIZES.map { it.first }, size) { size = it }
+                            DropDown(PAPER_COLORS.map { tr(it.first) }, color) { color = it }
                             if (!board) Segmented(listOf(tr("竖向"), tr("横向")), if (landscape) 1 else 0) { landscape = it == 1 }
                         }
                         Box(Modifier.fillMaxWidth().height(1.dp).background(p.ink(0.1f)))
