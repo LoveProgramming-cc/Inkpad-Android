@@ -78,6 +78,9 @@ internal fun jsonEq(a: Any?, b: Any?): Boolean = when {
     else -> a == b
 }
 
+/** A deep copy of a JSON tree, for code outside the core. */
+fun deepCopyJson(v: Any?): Any? = deepCopy(v)
+
 internal fun numOf(v: Any?, default: Double = 0.0): Double = (v as? Number)?.toDouble() ?: default
 
 @Suppress("UNCHECKED_CAST")

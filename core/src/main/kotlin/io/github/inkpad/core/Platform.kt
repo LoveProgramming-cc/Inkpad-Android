@@ -46,6 +46,9 @@ object StubMetrics : TextMetrics {
 interface ImageCodec {
     /** PNG bytes turned k quarter turns clockwise. */
     fun rotate(png: ByteArray, k: Int): ByteArray
+
+    /** Any picture file as PNG, upright, no larger than [limit] pixels on its longer side. */
+    fun toPng(bytes: ByteArray, limit: Int): ByteArray
 }
 
 object Platform {
