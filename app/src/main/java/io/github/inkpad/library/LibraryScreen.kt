@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -464,42 +465,52 @@ fun CloudMenu(app: AppModel, close: () -> Unit) {
     app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
     val context = androidx.compose.ui.platform.LocalContext.current
-    Column(Modifier.width(300.dp).padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Label(tr("Google Drive 同步"), 16f, FontWeight.Bold)
+    // As A:LibraryView CloudPanel: what it does, where it stands, two wide buttons.
+    Column(Modifier.width(308.dp).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Label("Google Drive", 18f, FontWeight.Bold)
         if (!app.connected) {
-            Label(tr("把笔记同步到你自己的 Google Drive，在其它设备上接着写。"), 14f, color = p.ink(0.7f))
-            DialogButton(tr("连接 Google Drive…"), suggested = true) {
+            Label(tr("把文稿库同步到你的 Google Drive 里的“Inkpad”文件夹。应用只能访问它自己创建的文件。"), 13f, color = p.ink(0.6f))
+            DialogButton(tr("连接 Google Drive…"), suggested = true, modifier = Modifier.fillMaxWidth()) {
                 close()
-                io.github.inkpad.sync.Connect.start(app)
+                if (io.github.inkpad.sync.GoogleAccount.client(context) == null) app.showSettings = true
+                else io.github.inkpad.sync.Connect.start(app)
             }
         } else {
             val status = when {
-                app.syncing -> tr("正在同步")
-                app.syncError != null -> trf("上次同步失败：%s", app.syncError)
-                app.lastSync != null -> trf("上次同步：%s", fmtDate(tr("%Y年%-m月%-d日 %H:%M"), (app.lastSync!! * 1000).toLong()))
+                app.syncing -> tr("正在同步…")
+                app.syncError != null -> tr("上次同步失败：") + app.syncError
+                app.lastSync != null -> tr("上次同步：") + fmtDate(tr("%Y年%-m月%-d日 %H:%M"), (app.lastSync!! * 1000).toLong())
                 else -> tr("已连接，尚未同步")
             }
-            Label(status, 14f, color = p.ink(0.75f))
+            Label(status, 13f, color = p.ink(0.6f))
             if (app.syncing) {
-                // The file being moved: two lines at most, so the menu keeps its size.
-                Label(app.syncText, 13f, color = p.ink(0.6f), maxLines = 2, modifier = Modifier.height(36.dp))
-                Box(Modifier.fillMaxWidth().height(6.dp).background(p.ink(0.1f), CircleShape)) {
-                    Box(Modifier.fillMaxWidth(app.syncFraction.toFloat().coerceIn(0f, 1f)).height(6.dp).background(p.accent, CircleShape))
+                // The file being moved has two lines to itself, whatever its length, so that the
+                // panel keeps its size.
+                Box(Modifier.fillMaxWidth().height(38.dp), contentAlignment = Alignment.Center) {
+                    Label(app.syncText, 12f, color = p.ink(0.75f), maxLines = 2, align = androidx.compose.ui.text.style.TextAlign.Center)
                 }
-                Label("${(app.syncFraction * 100).roundToInt()}%", 13f, color = p.ink(0.6f))
+                val f by androidx.compose.animation.core.animateFloatAsState(app.syncFraction.toFloat().coerceIn(0f, 1f), label = "sync")
+                Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(p.ink(0.12f))) {
+                    Box(Modifier.fillMaxWidth(f).fillMaxHeight().background(p.accent))
+                }
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Label("${(app.syncFraction * 100).roundToInt()}%", 12f, color = p.ink(0.6f))
+                }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DialogButton(tr("立即同步"), suggested = true, enabled = !app.syncing) { app.sync(quiet = false) }
-                DialogButton(tr("断开连接")) {
-                    close()
-                    Thread {
-                        io.github.inkpad.sync.GoogleAccount.disconnect(context)
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            app.connected = false
-                            app.show(tr("已断开连接"))
-                        }
-                    }.start()
-                }
+            Label(tr("回到文稿库时自动同步。删除的笔记会进入废纸篓，两边都改过的会逐笔合并。"), 13f, color = p.ink(0.6f))
+            DialogButton(tr("立即同步"), suggested = true, enabled = !app.syncing, modifier = Modifier.fillMaxWidth()) {
+                close()
+                app.sync(quiet = false)
+            }
+            DialogButton(tr("断开连接"), modifier = Modifier.fillMaxWidth()) {
+                close()
+                Thread {
+                    io.github.inkpad.sync.GoogleAccount.disconnect(context)
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        app.connected = false
+                        app.show(tr("已断开连接"))
+                    }
+                }.start()
             }
         }
     }
@@ -845,27 +856,32 @@ fun FolderArt(color: DoubleArray, icon: String, w: Int = 150, h: Int = 118) {
 private fun FolderStyleDialog(lib: LibraryState, e: Entry, what: String, dismiss: () -> Unit) {
     lib.app.settingsTick.intValue   // the settings are a plain map: this is what redraws it
     val p = palette
-    DialogCard(dismiss) {
-        Label(if (what == "color") tr("自定义颜色") else tr("设置图标"), 17f, FontWeight.Bold)
-        if (what == "color") {
-            for (row in FOLDER_COLORS.chunked(4)) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                for (c in row) Box(Modifier.clickable {
-                    lib.act { lib.store.setFolderStyle(e.file, color = c) }
-                    dismiss()
-                }) { FolderArt(c, lib.store.folderStyle(e.file).second, 64, 50) }
-            }
-        } else {
-            val names = listOf("") + Icons.glyphNames
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                for (row in names.chunked(5)) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (n in row) Box(Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(p.ink(0.05f)).clickable {
-                        lib.act { lib.store.setFolderStyle(e.file, icon = n) }
+    val color = what == "color"
+    val names = if (color) emptyList() else listOf("") + Icons.glyphNames
+    val count = if (color) FOLDER_COLORS.size else names.size
+    val columns = if (color) 4 else 5
+    // As A:LibraryView ChoiceDialog: the heading in the middle, a grid of 48 dp cells, Cancel
+    // across the bottom.
+    DialogCard(dismiss, width = if (color) 280 else 320) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Label(if (color) tr("文件夹颜色") else tr("文件夹图标"), 19f, FontWeight.Bold)
+        }
+        Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (row in (0 until count).chunked(columns)) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (k in row) Box(
+                    Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(p.ink(0.05f)).clickable {
+                        lib.act { if (color) lib.store.setFolderStyle(e.file, color = FOLDER_COLORS[k]) else lib.store.setFolderStyle(e.file, icon = names[k]) }
                         dismiss()
-                    }, contentAlignment = Alignment.Center) { if (n.isEmpty()) Label(tr("无"), 13f) else Icon(n, size = 26.dp) }
+                    },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (color) Box(Modifier.size(30.dp).clip(CircleShape).background(Color(io.github.inkpad.render.argb(FOLDER_COLORS[k]))).border(1.dp, p.ink(0.15f), CircleShape))
+                    else Icon(if (names[k].isEmpty()) "none" else names[k], size = 22.dp)
                 }
+                repeat(columns - row.size) { Spacer(Modifier.size(48.dp)) }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { DialogButton(tr("取消"), onClick = dismiss) }
+        DialogButton(tr("取消"), modifier = Modifier.fillMaxWidth(), onClick = dismiss)
     }
 }
 

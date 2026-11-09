@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -165,10 +166,11 @@ fun DropDown(labels: List<String>, selected: Int, onPick: (Int) -> Unit) {
 
 /** A menu's rows; null is a separator. */
 @Composable
-fun MenuList(items: List<MenuItem?>, close: () -> Unit) {
+fun MenuList(items: List<MenuItem?>, close: () -> Unit, fill: Boolean = false) {
     val p = palette
-    // As wide as the longest row, as the other editions' menus are; not a fixed broad card.
-    Column(Modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max).widthIn(min = 150.dp, max = 320.dp)) {
+    // As wide as the longest row, as the other editions' menus are; not a fixed broad card. In a
+    // panel ([fill]) the rows and the lines between them go the panel's whole width.
+    Column(if (fill) Modifier.fillMaxWidth() else Modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max).widthIn(min = 200.dp, max = 320.dp)) {
         for (item in items) {
             if (item == null) {
                 Box(Modifier.padding(vertical = 4.dp, horizontal = 8.dp).fillMaxWidth().height(1.dp).background(p.ink(0.1f)))
@@ -184,11 +186,11 @@ fun MenuList(items: List<MenuItem?>, close: () -> Unit) {
                     }
                     .padding(horizontal = 12.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 val c = if (item.danger) p.danger else p.ink(if (item.enabled) 1f else 0.35f)
-                if (item.icon != null) Icon(item.icon, c, 18.dp)
-                Label(item.text, color = c)
+                if (item.icon != null) Icon(item.icon, c, 20.dp)
+                Label(item.text, 16f, color = c)
             }
         }
     }
@@ -215,22 +217,24 @@ fun DialogCard(onDismiss: () -> Unit, width: Int = 420, content: @Composable Col
 
 /** A suggested (accent) or plain button in a dialog. */
 @Composable
-fun DialogButton(text: String, suggested: Boolean = false, danger: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+fun DialogButton(text: String, suggested: Boolean = false, danger: Boolean = false, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val p = palette
     val bg = when {
         suggested -> p.accent
         danger -> p.danger
-        else -> p.ink(0.08f)
+        else -> p.ink(0.1f)
     }
+    // A:Sheets.swift DialogButtonStyle: 34 high, 9 round, bold only when it is the one to press.
     Box(
-        Modifier
-            .clip(RoundedCornerShape(10.dp))
+        modifier
+            .clip(RoundedCornerShape(9.dp))
             .background(bg.copy(alpha = if (enabled) bg.alpha else bg.alpha * 0.4f))
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 9.dp),
+            .heightIn(min = 34.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Label(text, weight = FontWeight.SemiBold, color = if (suggested || danger) Color.White else p.ink)
+        Label(text, weight = if (suggested || danger) FontWeight.SemiBold else FontWeight.Normal, color = if (suggested || danger) Color.White else p.ink)
     }
 }
 
@@ -317,14 +321,14 @@ fun Switch(on: Boolean, onChange: (Boolean) -> Unit) {
     val track = androidx.compose.ui.graphics.lerp(p.ink(0.2f), p.accent, t)
     Box(
         Modifier
-            .size(46.dp, 26.dp)
+            .size(51.dp, 31.dp)   // the size of iOS's switch
             .clip(CircleShape)
             .background(track)
             .clickable { onChange(!on) }
-            .padding(3.dp),
+            .padding(2.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        Box(Modifier.offset(x = 20.dp * t).size(20.dp).shadow(2.dp, CircleShape).background(Color.White, CircleShape))
+        Box(Modifier.offset(x = 20.dp * t).size(27.dp).shadow(2.dp, CircleShape).background(Color.White, CircleShape))
     }
 }
 
@@ -380,5 +384,27 @@ fun Modifier.appear(origin: androidx.compose.ui.graphics.TransformOrigin): Modif
         scaleX = k
         scaleY = k
         transformOrigin = origin
+    }
+}
+
+
+/** Linked buttons, one of them chosen (A:Theme.swift Linked): equal segments on a faint tint, the
+ *  chosen one tinted more, hairlines between them. Seen the same in light and dark. */
+@Composable
+fun <T> Linked(entries: List<Pair<T, String>>, value: T, modifier: Modifier = Modifier, fill: Boolean = true, onPick: (T) -> Unit) {
+    val p = palette
+    Row(modifier.clip(RoundedCornerShape(9.dp)).height(androidx.compose.foundation.layout.IntrinsicSize.Min)) {
+        entries.forEachIndexed { i, (v, text) ->
+            val on = v == value
+            Box(
+                (if (fill) Modifier.weight(1f) else Modifier)
+                    .background(p.ink(if (on) 0.2f else 0.08f))
+                    .clickable { onPick(v) }
+                    .heightIn(min = 34.dp)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) { Label(text, 14f, maxLines = 1) }
+            if (i < entries.size - 1) Box(Modifier.width(1.dp).fillMaxHeight().background(p.ink(0.12f)))
+        }
     }
 }

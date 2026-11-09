@@ -874,7 +874,7 @@ private fun ColorSlots(ed: EditorState, colorsKey: String, indexKey: String) {
 
 @Composable
 private fun PanelTitle(text: String) {
-    Label(text, 15f, FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
+    Label(text, 18f, FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))   // A: Panel, 18 bold
 }
 
 @Composable
@@ -1158,7 +1158,7 @@ private fun EraserPanel(ed: EditorState, close: () -> Unit) {
             st["eraser_auto"] = it
             ed.save()
         }
-        MenuList(listOf(MenuItem(tr("清除页面"), danger = true) { ed.clearPage(ed.currentPage()) }), close)
+        MenuList(listOf(MenuItem(tr("清除页面"), danger = true) { ed.clearPage(ed.currentPage()) }), close, fill = true)
     }
 }
 
@@ -1257,7 +1257,7 @@ private fun CanvasMenu(ed: EditorState, x: Double, y: Double) {
     val loc = IntArray(2)
     c.getLocationInWindow(loc)
     PopAt(loc[0] + (x * density).roundToInt(), loc[1] + (y * density).roundToInt(), { ed.menuAt = null }) {
-        MenuList(rows) { ed.menuAt = null }
+        MenuList(rows, { ed.menuAt = null })
     }
 }
 
@@ -1292,14 +1292,10 @@ private fun AddPagePanel(ed: EditorState, close: () -> Unit) {
     var pos by remember { mutableStateOf(st.str("add_pos")) }
     Column(Modifier.width(320.dp)) {
         PanelTitle(if (page.board) tr("添加白板") else tr("添加页面"))
-        Row(Modifier.padding(horizontal = 6.dp).fillMaxWidth().background(palette.ink(0.06f), RoundedCornerShape(10.dp)).padding(3.dp)) {
-            for ((v, t) in listOf("before" to "在此之前", "after" to "在此之后", "last" to "最后一页")) {
-                Box(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(if (pos == v) palette.cardBg else Color.Transparent).clickable {
-                    pos = v
-                    st["add_pos"] = v
-                    ed.app.saveSettings()
-                }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) { Label(tr(t), 13f) }
-            }
+        io.github.inkpad.ui.Linked(listOf("before" to tr("在此之前"), "after" to tr("在此之后"), "last" to tr("最后一页")), pos, Modifier.padding(horizontal = 6.dp).fillMaxWidth()) {
+            pos = it
+            st["add_pos"] = it
+            ed.app.saveSettings()
         }
         Caption(tr("模板"))
         val blank = remember(page) { page.blankLike() }
@@ -1319,7 +1315,7 @@ private fun AddPagePanel(ed: EditorState, close: () -> Unit) {
             },
             MenuItem(tr("图像…"), "image") { io.github.inkpad.io.Importer.addPicturePage(ed) },
             MenuItem(tr("导入 PDF…"), "share") { io.github.inkpad.io.Importer.importPdfPages(ed) },
-        ), close)
+        ), close, fill = true)
     }
 }
 
@@ -1391,7 +1387,7 @@ private fun PagePanel(ed: EditorState, close: () -> Unit) {
             null,
             MenuItem(tr("清除页面"), "eraser", danger = true) { ed.clearPage(page) },
             MenuItem(tr("删除页面"), "trash", danger = true) { ed.deletePage(page) },
-        ), close)
+        ), close, fill = true)
     }
 }
 

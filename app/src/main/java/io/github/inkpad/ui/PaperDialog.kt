@@ -135,7 +135,7 @@ fun PaperDialog(template: Template, board: Boolean, heading: String, apply: Stri
                         FlowRow(Modifier.fillMaxWidth().padding(10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (!board) DropDown(SIZES.map { it.first }, size) { size = it }
                             DropDown(PAPER_COLORS.map { tr(it.first) }, color) { color = it }
-                            if (!board) Segmented(listOf(tr("竖向"), tr("横向")), if (landscape) 1 else 0) { landscape = it == 1 }
+                            if (!board) Linked(listOf(false to tr("竖向"), true to tr("横向")), landscape, fill = false) { landscape = it }
                         }
                         Box(Modifier.fillMaxWidth().height(1.dp).background(p.ink(0.1f)))
                         val groups = if (board) listOf(tr("背景样式") to PAPERS[0].second.filter { it.first != "wide" }) else PAPERS.map { tr(it.first) to it.second }
@@ -176,17 +176,6 @@ fun PaperDialog(template: Template, board: Boolean, heading: String, apply: Stri
     }
 }
 
-/** A row of linked toggle buttons. */
-@Composable
-fun Segmented(labels: List<String>, selected: Int, onPick: (Int) -> Unit) {
-    val p = palette
-    Row(Modifier.background(p.ink(0.06f), RoundedCornerShape(10.dp)).padding(3.dp)) {
-        labels.forEachIndexed { i, t ->
-            Box(Modifier.clip(RoundedCornerShape(8.dp)).background(if (i == selected) p.cardBg else Color.Transparent).clickable { onPick(i) }
-                .padding(horizontal = 10.dp, vertical = 6.dp)) { Label(t, 13f) }
-        }
-    }
-}
 
 /** No cover, or one of the designed covers in one of the colours. */
 @Composable
