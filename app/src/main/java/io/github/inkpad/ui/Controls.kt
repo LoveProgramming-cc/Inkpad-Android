@@ -1,0 +1,314 @@
+package io.github.inkpad.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import io.github.inkpad.core.tr
+
+/** Text in the interface's own style. */
+@Composable
+fun Label(text: String, size: Float = 15f, weight: FontWeight = FontWeight.Normal, color: Color = palette.ink, maxLines: Int = Int.MAX_VALUE, modifier: Modifier = Modifier, align: androidx.compose.ui.text.style.TextAlign = androidx.compose.ui.text.style.TextAlign.Unspecified) {
+    BasicText(text, modifier, style = TextStyle(fontSize = size.sp, fontWeight = weight, color = color, textAlign = align), maxLines = maxLines, overflow = TextOverflow.Ellipsis)
+}
+
+/** Places a popover below its anchor, or above when there is no room, and keeps it on screen. */
+private class Below(val gap: Int) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        var x = anchorBounds.center.x - popupContentSize.width / 2
+        x = x.coerceIn(8, maxOf(8, windowSize.width - popupContentSize.width - 8))
+        var y = anchorBounds.bottom + gap
+        if (y + popupContentSize.height > windowSize.height - 8 && anchorBounds.top - gap - popupContentSize.height > 8) {
+            y = anchorBounds.top - gap - popupContentSize.height
+        }
+        return IntOffset(x, y.coerceAtLeast(8))
+    }
+}
+
+/** A popover card: rounded, with a shadow, scrolling when it is taller than the screen allows. */
+@Composable
+fun PopoverCard(content: @Composable ColumnScope.() -> Unit) {
+    val p = palette
+    Column(
+        Modifier
+            .shadow(16.dp, RoundedCornerShape(16.dp))
+            .background(p.popoverBg, RoundedCornerShape(16.dp))
+            .border(1.dp, Color.Black.copy(alpha = 0.06f), RoundedCornerShape(16.dp))
+            .heightIn(max = 640.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 6.dp, horizontal = 6.dp),
+        content = content,
+    )
+}
+
+/** A button that opens a popover; the content gets a function that closes it. */
+@Composable
+fun PopButton(
+    label: @Composable (open: () -> Unit) -> Unit,
+    content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        label { open = true }
+        if (open) {
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            Popup(popupPositionProvider = Below(with(density) { 6.dp.roundToPx() }), onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
+                PopoverCard { content { open = false } }
+            }
+        }
+    }
+}
+
+/** A popover shown at a point of the screen (a long press, the selection). */
+@Composable
+fun PopAt(x: Int, y: Int, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Popup(popupPositionProvider = object : PopupPositionProvider {
+        override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) =
+            IntOffset((x - popupContentSize.width / 2).coerceIn(8, maxOf(8, windowSize.width - popupContentSize.width - 8)),
+                (if (y + popupContentSize.height > windowSize.height - 8) y - popupContentSize.height else y).coerceAtLeast(8))
+    }, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true)) {
+        PopoverCard(content)
+    }
+}
+
+class MenuItem(val text: String, val icon: String? = null, val danger: Boolean = false, val enabled: Boolean = true, val action: () -> Unit)
+
+/** A menu's rows; null is a separator. */
+@Composable
+fun MenuList(items: List<MenuItem?>, close: () -> Unit) {
+    val p = palette
+    Column(Modifier.widthIn(min = 200.dp, max = 340.dp)) {
+        for (item in items) {
+            if (item == null) {
+                Box(Modifier.padding(vertical = 4.dp, horizontal = 8.dp).fillMaxWidth().height(1.dp).background(p.ink(0.1f)))
+                continue
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(9.dp))
+                    .clickable(enabled = item.enabled) {
+                        close()
+                        item.action()
+                    }
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                val c = if (item.danger) p.danger else p.ink(if (item.enabled) 1f else 0.35f)
+                if (item.icon != null) Icon(item.icon, c, 18.dp)
+                Label(item.text, color = c)
+            }
+        }
+    }
+}
+
+/** A dialog card in the middle of the window, as the desktop app's. */
+@Composable
+fun DialogCard(onDismiss: () -> Unit, width: Int = 420, content: @Composable ColumnScope.() -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val p = palette
+        Column(
+            Modifier
+                .padding(16.dp)
+                .widthIn(max = width.dp)
+                .shadow(30.dp, RoundedCornerShape(15.dp))
+                .background(p.windowBg, RoundedCornerShape(15.dp))
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = content,
+        )
+    }
+}
+
+/** A suggested (accent) or plain button in a dialog. */
+@Composable
+fun DialogButton(text: String, suggested: Boolean = false, danger: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+    val p = palette
+    val bg = when {
+        suggested -> p.accent
+        danger -> p.danger
+        else -> p.ink(0.08f)
+    }
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg.copy(alpha = if (enabled) bg.alpha else bg.alpha * 0.4f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Label(text, weight = FontWeight.SemiBold, color = if (suggested || danger) Color.White else p.ink)
+    }
+}
+
+/** A one-line (or several-line) text field in the interface's style. */
+@Composable
+fun Field(value: String, onChange: (String) -> Unit, placeholder: String = "", singleLine: Boolean = true, minHeight: Int = 0, focus: Boolean = false, modifier: Modifier = Modifier) {
+    val p = palette
+    val fr = remember { FocusRequester() }
+    Box(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = maxOf(40, minHeight).dp)
+            .background(p.ink(0.06f), RoundedCornerShape(9.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        if (value.isEmpty()) Label(placeholder, color = p.ink(0.4f))
+        BasicTextField(value, onChange, Modifier.fillMaxWidth().focusRequester(fr), singleLine = singleLine,
+            textStyle = TextStyle(fontSize = 15.sp, color = p.ink), cursorBrush = SolidColor(p.accent))
+    }
+    if (focus) LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
+}
+
+/** Ask for a line of text. */
+@Composable
+fun Prompt(title: String, initial: String, ok: String = tr("确定"), message: String? = null, multiline: Boolean = false, onDone: (String?) -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    DialogCard({ onDone(null) }) {
+        Label(title, 17f, FontWeight.Bold)
+        if (message != null) Label(message, 14f, color = palette.ink(0.7f))
+        Field(text, { text = it }, singleLine = !multiline, minHeight = if (multiline) 110 else 0, focus = true)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            DialogButton(tr("取消")) { onDone(null) }
+            Spacer(Modifier.width(8.dp))
+            DialogButton(ok, suggested = true) { onDone(text) }
+        }
+    }
+}
+
+/** Ask to confirm something. */
+@Composable
+fun Confirm(title: String, message: String, ok: String, danger: Boolean = false, onDone: (Boolean) -> Unit) {
+    DialogCard({ onDone(false) }) {
+        Label(title, 17f, FontWeight.Bold)
+        Label(message, 14f, color = palette.ink(0.75f))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            DialogButton(tr("取消")) { onDone(false) }
+            Spacer(Modifier.width(8.dp))
+            DialogButton(ok, suggested = !danger, danger = danger) { onDone(true) }
+        }
+    }
+}
+
+/** Adwaita's toast: a dark rounded slab near the bottom edge, with at most one button. */
+@Composable
+fun Toast(text: String, button: String?, onButton: () -> Unit) {
+    Row(
+        Modifier
+            .shadow(8.dp, CircleShape)
+            .background(Color(0xF0292929), CircleShape)
+            .padding(horizontal = 18.dp, vertical = if (button == null) 11.dp else 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Label(text, 15f, color = Color.White)
+        if (button != null) {
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White.copy(alpha = 0.16f))
+                    .clickable(onClick = onButton)
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
+            ) { Label(button, 15f, FontWeight.SemiBold, Color.White) }
+        }
+    }
+}
+
+/** A switch in the desktop app's look. */
+@Composable
+fun Switch(on: Boolean, onChange: (Boolean) -> Unit) {
+    val p = palette
+    Box(
+        Modifier
+            .size(46.dp, 26.dp)
+            .clip(CircleShape)
+            .background(if (on) p.accent else p.ink(0.2f))
+            .clickable { onChange(!on) }
+            .padding(3.dp),
+        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(Modifier.size(20.dp).shadow(2.dp, CircleShape).background(Color.White, CircleShape))
+    }
+}
+
+/** A row of a settings list: a title, an optional subtitle, and a control at the end. */
+@Composable
+fun SettingRow(title: String, subtitle: String? = null, onClick: (() -> Unit)? = null, end: @Composable () -> Unit = {}) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Label(title)
+            if (subtitle != null) Label(subtitle, 13f, color = palette.ink(0.6f))
+        }
+        Spacer(Modifier.width(12.dp))
+        end()
+    }
+}
+
+/** A titled group of rows on a card. */
+@Composable
+fun SettingGroup(title: String?, content: @Composable ColumnScope.() -> Unit) {
+    val p = palette
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        if (title != null) Label(title, 14f, FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(p.cardBg, RoundedCornerShape(12.dp))
+                .border(1.dp, p.ink(0.07f), RoundedCornerShape(12.dp)),
+            content = content,
+        )
+    }
+}

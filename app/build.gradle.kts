@@ -1,6 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+// The release key stays on this machine: keystore.properties (not in git) names it, with
+// storeFile, storePassword, keyAlias and keyPassword. Without it a release build is signed
+// with the debug key, which installs fine but cannot update an APK signed with the real key.
+val keystore = rootProject.file("keystore.properties").takeIf { it.exists() }?.let { f ->
+    Properties().apply { f.inputStream().use { load(it) } }
 }
 
 android {
@@ -15,10 +24,21 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        if (keystore != null) create("release") {
+            storeFile = rootProject.file(keystore.getProperty("storeFile"))
+            storePassword = keystore.getProperty("storePassword")
+            keyAlias = keystore.getProperty("keyAlias")
+            keyPassword = keystore.getProperty("keyPassword")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 
@@ -38,4 +58,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.browser:browser:1.9.0")
+    // Putting the original PDF page under the exported ink, as itself (Apache-2.0).
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 }
