@@ -170,6 +170,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     internal var pressAt = Pair(0.0, 0.0)
     internal var hasPen = false
     internal var hover: Pair<Double, Double>? = null
+    internal var typicalPressure = 0.5   // a running mean of the pen's pressure, stroke by stroke
     internal val marks = ArrayList<Pair<Page, Box>>()   // search hits: page, box in page points
     internal var markAt = -1
     internal val laserTrails = ArrayList<Pair<Page, MutableList<DoubleArray>>>()
@@ -206,6 +207,38 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         isFocusable = true
         isFocusableInTouchMode = true
         setLayerType(LAYER_TYPE_HARDWARE, null)
+        // While it draws, the page asks for the screen's fastest refresh (144 Hz on the vivo Pad5
+        // Pro); idle, the system may slow down to save power.
+        if (Build.VERSION.SDK_INT >= 35) setRequestedFrameRate(REQUESTED_FRAME_RATE_CATEGORY_HIGH)
+    }
+
+    // -- the pen ahead of itself -------------------------------------------------------------------
+
+    /** The system's guess at where the pen is going (Android 14 and up), drawn as a short tail on
+     *  the line being written and replaced by the real samples as they come: the ink keeps up
+     *  with the nib by a frame or so. */
+    private val predictor = if (Build.VERSION.SDK_INT >= 34) android.view.MotionPredictor(context) else null
+    private var predicting = false
+    /** The predicted tail, in view points (dp); empty when there is none. */
+    internal var predicted: List<Pair<Double, Double>> = emptyList()
+
+    private fun predict(e: MotionEvent) {
+        val pr = predictor ?: return
+        if (Build.VERSION.SDK_INT < 34 || !predicting || op?.kind != "stroke") {
+            predicted = emptyList()
+            return
+        }
+        // About a frame ahead: further and the guess wanders.
+        val guess = pr.predict(e.eventTimeNanos + 12_000_000L)
+        if (guess == null) {
+            predicted = emptyList()
+            return
+        }
+        val list = ArrayList<Pair<Double, Double>>()
+        for (k in 0 until guess.historySize) list.add(Pair(guess.getHistoricalX(0, k) / dev, guess.getHistoricalY(0, k) / dev))
+        list.add(Pair(guess.getX(0) / dev, guess.getY(0) / dev))
+        guess.recycle()
+        predicted = list
     }
 
     /** Whether something is being written, erased or moved right now. */
@@ -350,6 +383,16 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             val i = currentPageIndex()
             relayout()
             configureAdj(slots[min(i, slots.size - 1)])
+        }
+        if (across() && doc != null && slots.isNotEmpty() && zoom < homeZoom() - 1e-6) {
+            // A view remembered from elsewhere, or a turned screen, may be smaller than a page
+            // side by side may be: it comes back to one whole page.
+            val i = currentPageIndex()
+            zoom = homeZoom()
+            renderZoom = zoom
+            relayout()
+            configureAdj(slots[min(i, slots.size - 1)])
+            host.viewChanged()
         }
         configureAdj()
     }
@@ -621,7 +664,19 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     }
 
     /** A whiteboard can be looked at from much further away than a page. */
-    internal fun minZoom() = if (doc?.pages?.get(0)?.board == true) BOARD_MIN_ZOOM else MIN_ZOOM
+    internal fun minZoom() = when {
+        doc?.pages?.get(0)?.board == true -> BOARD_MIN_ZOOM
+        // Side by side a page cannot be made smaller than the window (A: minimumZoomScale is
+        // homeZoom): zoomed out, the pages beside it would come into view.
+        across() && doc != null && W > 0 -> homeZoom()
+        else -> MIN_ZOOM
+    }
+
+    /** Side by side: the zoom at which one usual page fills the window (A:CanvasView homeZoom). */
+    internal fun homeZoom(): Double {
+        val (rw, rh) = usual()
+        return max(0.05, min(min((W - 2 * SIDE) / rw, (H - TOP - BOTTOM) / rh), 1.35))
+    }
 
     fun setMarks(m: List<Pair<Page, Box>>, at: Int = -1) {
         marks.clear()
@@ -1260,6 +1315,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         var turn: Double? = null
         var grab: String? = null   // "move", "copy" or "held"
         var zooming = false        // two fingers have spread or closed enough to zoom
+        var pinched = false        // two fingers were down at some point: no page turns until all are up
     }
 
     private fun kindOf(e: MotionEvent, i: Int): String = when (e.getToolType(i)) {
@@ -1271,6 +1327,11 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
         val action = e.actionMasked
+        if (Build.VERSION.SDK_INT >= 34 && predictor != null && e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+            if (action == MotionEvent.ACTION_DOWN) predicting = predictor.isPredictionAvailable(e.deviceId, e.source)
+            if (predicting) predictor.record(e)
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) predicted = emptyList()
+        }
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (action == MotionEvent.ACTION_DOWN && (touches.isNotEmpty() || tg != null)) {
@@ -1450,6 +1511,8 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         penAxis = (e.device?.getMotionRange(MotionEvent.AXIS_PRESSURE, e.source)?.range ?: 0f) > 0f
         mouseP = 0.5
         hover = null
+        // Every sample as it comes rather than gathered once a frame: the line follows sooner.
+        requestUnbufferedDispatch(e)
         down(x, y, penPressure(e.getPressure(i).toDouble(), e.eventTime), erase)
         log("pen down at ${x.roundToInt()},${y.roundToInt()} -> ${op?.kind ?: "nothing (text, a selection grabbed, or outside every page)"}")
     }
@@ -1466,6 +1529,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         penAt = Pair(x, y)
         if (TRIAL) log("pen move: pressure ${"%.3f".format(e.getPressure(i))} history ${e.historySize}")
         move(x, y, penPressure(e.getPressure(i).toDouble(), e.eventTime))
+        predict(e)
     }
 
     override fun onHoverEvent(e: MotionEvent): Boolean {
@@ -1671,6 +1735,14 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             tg = null
             val pages = d.pages.size
             if (pull != 0.0) pullRelease()
+            if (old != null && across() && old.pinched && old.page < slots.size) {
+                // A pinch never turns the page (A: UIScrollView zooms, it does not page): the page
+                // it began on comes back to rest in the window, however the fingers left.
+                val (lo, hi) = span(old.page)
+                turning = old.page
+                glide('h', clamp(h(), lo, hi))
+                return
+            }
             if (old != null && across() && old.over != 0.0 && old.page < slots.size) {
                 // Let go past the edge of a zoomed page: far enough turns it, less springs back.
                 val i = old.page
@@ -1704,6 +1776,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             old?.seen ?: arrayListOf(Pair(now, doubleArrayOf(zoom, h(), v()))),
             old?.page ?: (if (tops.isNotEmpty() && !board) currentPageIndex() else 0),
         )
+        g.pinched = (old?.pinched == true) || n > 1
         tg = g
         if (TRIAL) log("touch gesture: $n finger(s), zoom ${"%.3f".format(zoom)}, span ${"%.1f".format(sp)}, ids ${touches.keys}")
         if (rulerZone(cx, cy) != null) {
@@ -1819,21 +1892,24 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         // The page point that was between the fingers stays between them.
         // One finger drags the page along, so that letting go far enough turns it; fingers that
         // zoom keep to the page they hold.
-        place(zz, g.anchor, cx, cy, keepPage = g.n > 1)
-        if (g.n > 1 && !board) {
+        place(zz, g.anchor, cx, cy, keepPage = g.n > 1 || g.pinched)
+        if (g.n > 1 && !board && !across()) {
+            // Scrolling up and down, the page follows the fingers past where it may rest. Side by
+            // side it never does (A: the scroll view keeps it on its page; settleAcross after):
+            // following them would bring the next page in beside it.
             slackAnim?.let { removeCallbacks(it); slackAnim = null }
             slackX = h() - rawWant[0]
             slackY = v() - rawWant[1]
         }
         g.over = 0.0
-        if (across() && g.n == 1 && g.page < slots.size && span(g.page).second > span(g.page).first + 1) {
+        if (across() && g.n == 1 && !g.pinched && g.page < slots.size && span(g.page).second > span(g.page).first + 1) {
             // Zoomed in, a finger moves about inside its page. Past the edge the page gives only a
             // little: it takes a long, deliberate pull to turn to the next one.
             val (lo, hi) = span(g.page)
             val w0 = want[0]
             g.over = if (w0 > hi) w0 - hi else if (w0 < lo) w0 - lo else 0.0
             setAdj('h', clamp(w0, lo, hi) + 0.4 * g.over)
-        } else if (across() && g.n == 1 && abs(g.origin[1] - h()) < 1 && abs(g.origin[0] - zoom) < 1e-6) {
+        } else if (across() && g.n == 1 && !g.pinched && abs(g.origin[1] - h()) < 1 && abs(g.origin[0] - zoom) < 1e-6) {
             // Only a drag that began with the first or last page at rest pulls a new one out.
             val over = want[0] - h()
             pulled(if (abs(over) > 1) over else 0.0)

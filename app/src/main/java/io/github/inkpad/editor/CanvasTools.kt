@@ -187,6 +187,21 @@ private fun PageCanvas.snapStroke(c: Canvas, o: Op, i: Int) {
     c.save()
     drawStroke(c, pageEnv(c, i), tail)
     c.restore()
+    // Where the pen is about to be (see PageCanvas.predicted): drawn, never kept.
+    val guess = predicted
+    if (guess.isNotEmpty() && item.dash == 0 && o.rule == null && !o.fixed) {
+        val last = pts.last()
+        val ahead = ArrayList<DoubleArray>()
+        ahead.add(last)
+        for ((x, y) in guess) {
+            val (px, py) = toPage(i, x, y)
+            ahead.add(doubleArrayOf(px, py, last[2]))
+        }
+        val guessStroke = Stroke(item.tool, item.color, item.width, ahead, item.sens)
+        c.save()
+        drawStroke(c, pageEnv(c, i), guessStroke)
+        c.restore()
+    }
 }
 
 private fun PageCanvas.snapLasso(c: Canvas, o: Op, i: Int) {
@@ -261,7 +276,10 @@ private fun PageCanvas.drawHover(c: Canvas) {
         !showCross && (tool == "pen" || tool == "hl") -> {
             // The mark the pen is about to leave: its colour, and its width at this zoom (A).
             val hl = tool == "hl"
-            val r = max(2.5, (if (hl) hlWidth else penWidth) * zoom) / 2
+            // A fountain pen or brush is as wide as the pressure makes it: the dot shows the width
+            // this hand's strokes have had of late, not the width at a pressure it never uses.
+            val w = if (hl) hlWidth else Stroke(penType, penColor, penWidth, emptyList(), penSens).wAt(typicalPressure)
+            val r = max(2.5, w * zoom) / 2
             c.drawCircle(fx, fy, (r + 0.8).toFloat(), fill(0xE6FFFFFF.toInt()))
             c.drawCircle(fx, fy, r.toFloat(), fill(argb(if (hl) hlColor else penColor, if (hl) 0.55 else 1.0)))
             c.drawCircle(fx, fy, r.toFloat(), stroke(0x591A1A1A, 0.5))
@@ -642,6 +660,11 @@ internal fun PageCanvas.up(x: Double, y: Double) {
     when (o.kind) {
         "stroke" -> {
             val item = o.item as Stroke
+            if (src == "pen" && item.pts.size > 3) {
+                // How hard this hand writes, for the mark under a hovering pen.
+                val mean = item.pts.sumOf { it[2] } / item.pts.size
+                typicalPressure += (mean - typicalPressure) * 0.3
+            }
             if (penStab > 0 && item.tool != "hl" && item.tool != "tape" && !o.fixed && o.rule == null) {
                 // Catch the lagging stabilised line up with where the pen lifted.
                 val (px, py) = toPage(o.i, x, y)

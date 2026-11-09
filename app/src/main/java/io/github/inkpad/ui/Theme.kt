@@ -241,3 +241,19 @@ fun Modifier.glass(shape: androidx.compose.ui.graphics.Shape): Modifier {
         },
     )
 }
+
+/** A bar over scrolling content, frosted: the content it is over blurred and washed with the
+ *  window's colour, as iOS's bars are. */
+@Composable
+fun Modifier.barGlass(state: dev.chrisbanes.haze.HazeState): Modifier {
+    val p = palette
+    return this.hazeBlur(
+        dev.chrisbanes.haze.HazeInput.Sources(state),
+        dev.chrisbanes.haze.blur.HazeBlurStyle {
+            blurRadius(24.dp)
+            backgroundColor(p.viewBg)
+            colorEffects(listOf(dev.chrisbanes.haze.blur.HazeColorEffect.tint(p.viewBg.copy(alpha = 0.74f))))
+            noiseFactor(0f)
+        },
+    )
+}

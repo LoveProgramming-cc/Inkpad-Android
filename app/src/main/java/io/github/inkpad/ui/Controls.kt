@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -79,7 +80,7 @@ fun PopoverCard(content: @Composable ColumnScope.() -> Unit) {
     val p = palette
     // A popup is a window of its own, as big as what it holds: the margin gives the shadow room
     // to fade out, where it would otherwise be cut off at the window's edge in a hard band.
-    Box(Modifier.padding(POPOVER_MARGIN)) {
+    Box(Modifier.padding(POPOVER_MARGIN).appear(androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f))) {
         Column(
             Modifier
                 .shadow(10.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black.copy(alpha = 0.12f), spotColor = Color.Black.copy(alpha = 0.22f))
@@ -201,6 +202,7 @@ fun DialogCard(onDismiss: () -> Unit, width: Int = 420, content: @Composable Col
         Column(
             Modifier
                 .padding(16.dp)
+                .appear(androidx.compose.ui.graphics.TransformOrigin.Center)
                 .widthIn(max = width.dp)
                 .shadow(30.dp, RoundedCornerShape(15.dp))
                 .background(p.windowBg, RoundedCornerShape(15.dp))
@@ -359,5 +361,24 @@ fun SettingGroup(title: String?, content: @Composable ColumnScope.() -> Unit) {
                 .border(1.dp, p.ink(0.07f), RoundedCornerShape(12.dp)),
             content = content,
         )
+    }
+}
+
+
+/** Grows in from [origin] and fades in, as iOS's menus and alerts do, instead of being there at
+ *  once: a quick spring that settles without a wobble. */
+@Composable
+fun Modifier.appear(origin: androidx.compose.ui.graphics.TransformOrigin): Modifier {
+    val t = remember { androidx.compose.animation.core.Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        t.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.86f, stiffness = 900f))
+    }
+    return this.graphicsLayer {
+        val v = t.value
+        alpha = v.coerceIn(0f, 1f)
+        val k = 0.9f + 0.1f * v
+        scaleX = k
+        scaleY = k
+        transformOrigin = origin
     }
 }

@@ -105,7 +105,7 @@ fun PaperDialog(template: Template, board: Boolean, heading: String, apply: Stri
         return Template(w, h, paper, c)
     }
     Dialog({ done(null, "", null) }, DialogProperties(usePlatformDefaultWidth = false)) {
-        BoxWithConstraints(Modifier.padding(16.dp)) {
+        BoxWithConstraints(Modifier.padding(16.dp).appear(androidx.compose.ui.graphics.TransformOrigin.Center)) {
             val narrow = maxWidth < 700.dp
             Column(Modifier.widthIn(max = if (withTitle) 880.dp else 660.dp).heightIn(max = 640.dp).shadow(30.dp, RoundedCornerShape(15.dp)).background(p.windowBg, RoundedCornerShape(15.dp))) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {

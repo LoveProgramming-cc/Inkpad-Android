@@ -7,6 +7,13 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.safeDrawing
+import io.github.inkpad.ui.barGlass
+import dev.chrisbanes.haze.hazeSource
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -323,10 +330,7 @@ fun LibraryScreen(app: AppModel) {
         val compact = maxWidth < 700.dp
         Row(Modifier.fillMaxSize()) {
             if (!compact) Nav(lib, Modifier.width(250.dp).fillMaxHeight())
-            Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-                TopBar(lib, compact)
-                Body(lib, compact)
-            }
+            Body(lib, compact)
         }
         DragGhost(lib)
     }
@@ -511,7 +515,38 @@ private fun Body(lib: LibraryState, compact: Boolean) {
     val entries = lib.entries()
     val store = lib.store
     val inside = lib.mode == "docs" && lib.folder != store.root && lib.query.isBlank()
-    Column(Modifier.fillMaxSize().padding(horizontal = if (compact) 10.dp else 26.dp)) {
+    // The notebooks scroll on under the bar at the top (search, title, buttons), which is frosted
+    // glass over them, as the other editions' bars are.
+    val glass = dev.chrisbanes.haze.rememberHazeState()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var headerPx by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val headerDp = with(density) { headerPx.toDp() }
+    val side = if (compact) 10.dp else 26.dp
+    val bottomInset = androidx.compose.foundation.layout.WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding()
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().hazeSource(glass).padding(horizontal = side)) {
+            if (entries.isEmpty()) {
+                Column(Modifier.fillMaxSize().padding(top = headerDp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    val q = lib.query.isNotBlank()
+                    Label(if (q) tr("没有匹配的项目") else mapOf("docs" to tr("还没有笔记"), "favs" to tr("还没有收藏"), "trash" to tr("废纸篓是空的"), "deleted" to tr("没有已删除的项目"))[lib.mode]!!, 22f, FontWeight.Bold)
+                    if (!q && lib.mode == "docs") Label(tr("点击“新建”创建笔记本，或导入一份 PDF。"), 15f, color = p.ink(0.6f), modifier = Modifier.padding(top = 8.dp))
+                }
+            } else {
+                LazyVerticalGrid(GridCells.Adaptive(if (compact) 150.dp else 186.dp), Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(top = headerDp + 6.dp, bottom = bottomInset + 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 22.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
+                    items(entries, key = { it.file.path }) { e -> Cell(lib, e) }
+                }
+            }
+        }
+        Column(
+            Modifier.fillMaxWidth()
+                .onSizeChanged { headerPx = it.height }
+                .barGlass(glass)
+                .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing.only(androidx.compose.foundation.layout.WindowInsetsSides.Top + androidx.compose.foundation.layout.WindowInsetsSides.Horizontal)),
+        ) {
+            TopBar(lib, compact)
+            Column(Modifier.padding(horizontal = side)) {
         if (inside) {
             // The path, every step of which can be gone to (and dropped on).
             Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
@@ -572,15 +607,6 @@ private fun Body(lib: LibraryState, compact: Boolean) {
                 }
             }
         }
-        if (entries.isEmpty()) {
-            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                val q = lib.query.isNotBlank()
-                Label(if (q) tr("没有匹配的项目") else mapOf("docs" to tr("还没有笔记"), "favs" to tr("还没有收藏"), "trash" to tr("废纸篓是空的"), "deleted" to tr("没有已删除的项目"))[lib.mode]!!, 22f, FontWeight.Bold)
-                if (!q && lib.mode == "docs") Label(tr("点击“新建”创建笔记本，或导入一份 PDF。"), 15f, color = p.ink(0.6f), modifier = Modifier.padding(top = 8.dp))
-            }
-        } else {
-            LazyVerticalGrid(GridCells.Adaptive(if (compact) 150.dp else 186.dp), Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 22.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
-                items(entries, key = { it.file.path }) { e -> Cell(lib, e) }
             }
         }
     }
