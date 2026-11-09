@@ -25,3 +25,8 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
 }
+
+tasks.test {
+    // Some tests run the desktop app's own Python code (ref/B, not committed) on our files.
+    systemProperty("inkpad.root", rootDir.path)
+}

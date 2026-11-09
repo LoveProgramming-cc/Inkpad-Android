@@ -147,3 +147,88 @@ fun Any?.point(): Pt = arr().map { it.num() }.toDoubleArray()
 
 /** A JSON list of points. */
 fun Any?.points(): List<Pt> = arr().map { it.point() }
+
+/**
+ * Writes JSON the way B does (Python's json.dumps with separators=(',', ':')): floats in Python's
+ * repr (595.0, 1e+16), anything outside ASCII as \uXXXX, keys in insertion order. Integral values
+ * meant as integers must be passed as Int or Long.
+ */
+object JsonOut {
+    fun write(value: Any?): String = StringBuilder().also { put(it, value) }.toString()
+
+    private fun put(b: StringBuilder, v: Any?) {
+        when (v) {
+            null -> b.append("null")
+            is Boolean -> b.append(if (v) "true" else "false")
+            is Int, is Long, is Short -> b.append(v.toString())
+            is Double -> b.append(pyFloat(v))
+            is Float -> b.append(pyFloat(v.toDouble()))
+            is String -> str(b, v)
+            is Map<*, *> -> {
+                b.append('{')
+                var first = true
+                for ((k, x) in v) {
+                    if (!first) b.append(',')
+                    first = false
+                    str(b, k as String)
+                    b.append(':')
+                    put(b, x)
+                }
+                b.append('}')
+            }
+            is Iterable<*> -> {
+                b.append('[')
+                var first = true
+                for (x in v) {
+                    if (!first) b.append(',')
+                    first = false
+                    put(b, x)
+                }
+                b.append(']')
+            }
+            is DoubleArray -> put(b, v.toList())
+            is IntArray -> put(b, v.toList())
+            else -> throw IllegalArgumentException("cannot write ${v::class} as JSON")
+        }
+    }
+
+    private fun str(b: StringBuilder, s: String) {
+        b.append('"')
+        for (c in s) {
+            when {
+                c == '"' -> b.append("\\\"")
+                c == '\\' -> b.append("\\\\")
+                c == '\n' -> b.append("\\n")
+                c == '\r' -> b.append("\\r")
+                c == '\t' -> b.append("\\t")
+                c == '\b' -> b.append("\\b")
+                c == '\u000c' -> b.append("\\f")
+                c < ' ' || c.code > 126 -> b.append("\\u%04x".format(c.code))
+                else -> b.append(c)
+            }
+        }
+        b.append('"')
+    }
+
+    /** Python's repr() of a float: the shortest digits that read back the same; scientific
+     *  notation below 1e-4 and from 1e16 on. */
+    fun pyFloat(x: Double): String {
+        if (x.isNaN()) return "NaN"
+        if (x.isInfinite()) return if (x > 0) "Infinity" else "-Infinity"
+        if (x == 0.0) return if (1.0 / x < 0) "-0.0" else "0.0"
+        val bd = java.math.BigDecimal(x.toString())   // Java's toString gives the shortest digits too
+        val digits = bd.unscaledValue().abs().toString().trimEnd('0').ifEmpty { "0" }
+        val exp = bd.precision() - bd.scale() - 1      // decimal exponent of the first digit
+        val sign = if (x < 0) "-" else ""
+        return if (exp < -4 || exp >= 16) {
+            val mant = if (digits.length == 1) digits else digits[0] + "." + digits.substring(1)
+            sign + mant + "e" + (if (exp < 0) "-" else "+") + "%02d".format(kotlin.math.abs(exp))
+        } else if (exp < 0) {
+            sign + "0." + "0".repeat(-exp - 1) + digits
+        } else if (digits.length <= exp + 1) {
+            sign + digits + "0".repeat(exp + 1 - digits.length) + ".0"
+        } else {
+            sign + digits.substring(0, exp + 1) + "." + digits.substring(exp + 1)
+        }
+    }
+}
