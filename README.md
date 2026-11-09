@@ -17,9 +17,16 @@ written on one goes on being written on any other.
 Needs Android Studio (for its JDK and the Android SDK).
 
 ```sh
-./gradlew :core:test          # the file format, geometry and sync, on a plain JVM
-./gradlew :app:assembleDebug  # app/build/outputs/apk/debug/app-debug.apk
+./gradlew :core:test            # the file format, geometry and sync, on a plain JVM
+./gradlew :app:assembleDebug    # app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:assembleRelease  # app/build/outputs/apk/release/app-release.apk
 ```
+
+A release build is signed with the key named in `keystore.properties` at the top of the repository
+(`storeFile`, `storePassword`, `keyAlias`, `keyPassword`; not in git), or with the debug key when
+there is none.
+
+Install on a tablet with USB debugging on: `adb install -r app/build/outputs/apk/release/app-release.apk`.
 
 ## How it was made
 
@@ -27,7 +34,7 @@ Inkpad was written with the help of AI coding assistants, directed and tested by
 
 ## Licence
 
-Copyright © 2026 the Inkpad authors.
+Copyright © 2026 the Inkpad authors. Third-party parts are listed in `THIRD-PARTY-NOTICES.md`.
 
 Inkpad is free software under the [GNU General Public License, version 3](LICENSE) or (at your
 option) any later version. Parts of it are translated from Inkpad-iOS, whose licence allows the
