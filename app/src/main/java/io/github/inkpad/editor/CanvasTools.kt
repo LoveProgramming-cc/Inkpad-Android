@@ -258,10 +258,17 @@ private fun PageCanvas.drawHover(c: Canvas) {
             p.moveTo(fx - 4, fy + 9); p.lineTo(fx + 4, fy + 9)
             c.drawPath(p, stroke(0xD91E1E1E.toInt(), 1.0))
         }
+        !showCross && (tool == "pen" || tool == "hl") -> {
+            // The mark the pen is about to leave: its colour, and its width at this zoom (A).
+            val hl = tool == "hl"
+            val r = max(2.5, (if (hl) hlWidth else penWidth) * zoom) / 2
+            c.drawCircle(fx, fy, (r + 0.8).toFloat(), fill(0xE6FFFFFF.toInt()))
+            c.drawCircle(fx, fy, r.toFloat(), fill(argb(if (hl) hlColor else penColor, if (hl) 0.55 else 1.0)))
+            c.drawCircle(fx, fy, r.toFloat(), stroke(0x591A1A1A, 0.5))
+        }
         !showCross || tool == "laser" -> {
-            val size = if (tool == "pen" || tool == "hl" || tool == "tape") max(3.0, (when (tool) { "pen" -> penWidth; "hl" -> hlWidth; else -> tapeWidth }) * zoom / 2) else 3.0
-            c.drawCircle(fx, fy, (size + 1).toFloat(), fill(0xE6FFFFFF.toInt()))
-            c.drawCircle(fx, fy, size.toFloat(), fill(if (tool == "laser") argb(laserColor) else 0xF21A1A1A.toInt()))
+            c.drawCircle(fx, fy, 3.1f, fill(0xE6FFFFFF.toInt()))
+            c.drawCircle(fx, fy, 2.1f, fill(if (tool == "laser") argb(laserColor) else 0xF21A1A1A.toInt()))
         }
         else -> for ((w, col) in listOf(3.0 to 0xCCFFFFFF.toInt(), 1.0 to 0xE61A1A1A.toInt())) {
             val p = Path()

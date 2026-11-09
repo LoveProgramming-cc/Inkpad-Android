@@ -217,7 +217,9 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     fun setDocument(d: Document) {
         unlisten?.invoke()
         doc = d
-        unlisten = d.listen { handler.post { docEvent(it) } }
+        // On the main thread at once: a finished stroke goes into the page's picture in the same
+        // frame as the live one goes away, or it would blink. (Sync merges arrive from elsewhere.)
+        unlisten = d.listen { e -> if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) docEvent(e) else handler.post { docEvent(e) } }
         for (e in cache.values) e.bitmap.recycle()
         cache.clear()
         pending.clear()
