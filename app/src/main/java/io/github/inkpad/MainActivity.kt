@@ -167,6 +167,16 @@ class MainActivity : ComponentActivity() {
         handle(intent)
     }
 
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (packageName.endsWith(".test") && ev.getToolType(ev.actionIndex) == android.view.MotionEvent.TOOL_TYPE_STYLUS) {
+            val a = ev.actionMasked
+            if (a == android.view.MotionEvent.ACTION_DOWN || a == android.view.MotionEvent.ACTION_POINTER_DOWN || a == android.view.MotionEvent.ACTION_UP || a == android.view.MotionEvent.ACTION_CANCEL)
+                android.util.Log.i("InkpadInput", "window: stylus ${android.view.MotionEvent.actionToString(a)} at ${(ev.x / resources.displayMetrics.density).toInt()},${(ev.y / resources.displayMetrics.density).toInt()} pressure ${"%.3f".format(ev.pressure)} flags ${ev.flags}")
+        }
+        val handled = super.dispatchTouchEvent(ev)
+        return handled
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (packageName.endsWith(".test") && intent.hasExtra("selftest_zoom")) {

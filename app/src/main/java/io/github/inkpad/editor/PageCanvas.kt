@@ -1408,7 +1408,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
                 penAt = Pair(x, y)
                 move(x, y, lastPressure())
                 penDown = false
-                log("pen up, was drawing: ${op?.kind}")
+                log("pen up, was drawing: ${op?.kind}, ${(op?.item as? io.github.inkpad.core.Stroke)?.pts?.size ?: 0} points")
                 up(x, y)
             }
             "touch" -> {
@@ -1471,11 +1471,16 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         // that, and its line is then shaped by speed alone, as a mouse's is.
         st.n++
         if (penAxis) {
-            // A pen that reports a pressure axis is taken at its word (B:canvas.py). A sample
-            // without pressure (the first one often has none, and the odd one later) keeps the
-            // pressure before it: guessing from speed there makes a blot where the line starts.
-            if (pressure > 0) st.last = clamp(pressure, 0.02, 1.0)
-            return if (st.last > 0) st.last else 0.3
+            // As A:CanvasTools pressure(): an ordinary writing press is the middle of the pens'
+            // range, twice that as hard as they respond to, and speed has its say beside it (a
+            // quick line is thinner however hard it is pressed). Android's pressure runs from 0
+            // to 1 with an ordinary press about a quarter (a vivo Pencil 3 writes at 0.1 to 0.5,
+            // 0.25 typically), where Apple's force is about 1: so twice the pressure is A's force
+            // halved. Taken as it came, the light ends of every stroke drew next to nothing.
+            // A sample without pressure (the first one often has none) keeps the one before.
+            if (pressure > 0) st.last = pressure
+            val force = if (st.last > 0) st.last else 0.25
+            return clamp(force * 2 + (mouseP - 0.5) * 0.7, 0.0, 1.0)
         }
         // A pen without a pressure sensor reports the same force all the time. It is known by
         // that, and its line is then shaped by speed alone, as a mouse's is.
@@ -1534,6 +1539,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
 
     override fun onHoverEvent(e: MotionEvent): Boolean {
         val kind = kindOf(e, 0)
+        if (TRIAL && e.actionMasked != MotionEvent.ACTION_HOVER_MOVE) log("hover ${MotionEvent.actionToString(e.actionMasked)} $kind at ${(e.x / dev).roundToInt()},${(e.y / dev).roundToInt()}")
         val was = hover
         when (e.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {

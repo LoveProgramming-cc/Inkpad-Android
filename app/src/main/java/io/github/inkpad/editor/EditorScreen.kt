@@ -108,7 +108,7 @@ val PALETTE = listOf(
     doubleArrayOf(1.0, 0.1, 0.1), doubleArrayOf(0.53, 0.18, 0.57), doubleArrayOf(0.95, 0.33, 0.33), doubleArrayOf(1.0, 0.6, 0.6), doubleArrayOf(0.97, 0.58, 0.11),
     doubleArrayOf(0.04, 0.47, 1.0), doubleArrayOf(0.05, 0.29, 0.56), doubleArrayOf(0.03, 0.62, 0.36), doubleArrayOf(0.49, 0.76, 0.22), doubleArrayOf(1.0, 1.0, 0.5),
 )
-const val PEN_SENS_DIVISOR = 50.0   // B: sens / 50
+const val PEN_SENS_DIVISOR = 100.0   // A:Tools penSens: the slider's 100 % is the response that used to be its 50 %
 
 fun pctToWidth(pct: Int) = 0.3 + pct * 0.047
 fun widthToPct(w: Double) = ((w - 0.3) / 0.047).roundToInt().coerceIn(0, 100)
