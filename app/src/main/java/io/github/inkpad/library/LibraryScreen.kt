@@ -543,10 +543,24 @@ private fun Body(lib: LibraryState, compact: Boolean) {
                     if (!q && lib.mode == "docs") Label(tr("点击“新建”创建笔记本，或导入一份 PDF。"), 15f, color = p.ink(0.6f), modifier = Modifier.padding(top = 8.dp))
                 }
             } else {
-                LazyVerticalGrid(GridCells.Adaptive(if (compact) 150.dp else 186.dp), Modifier.fillMaxSize(),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(top = headerDp + 6.dp, bottom = bottomInset + 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 22.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
-                    items(entries, key = { it.file.path }) { e -> Cell(lib, e) }
+                // Row by row rather than a grid: the cells of a row are as tall as its tallest, and
+                // each holds its picture and name in the middle, so a folder beside a notebook
+                // does not sit at the top of a gap.
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    val min = if (compact) 150.dp else 186.dp
+                    val gap = if (compact) 8.dp else 22.dp
+                    val columns = maxOf(1, ((maxWidth + gap) / (min + gap)).toInt())
+                    val rows = entries.chunked(columns)
+                    androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize(),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = headerDp + 6.dp, bottom = bottomInset + 20.dp),
+                        verticalArrangement = Arrangement.spacedBy(26.dp)) {
+                        items(rows.size, key = { rows[it].first().file.path }) { r ->
+                            Row(Modifier.fillMaxWidth().height(androidx.compose.foundation.layout.IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                                for (e in rows[r]) Box(Modifier.weight(1f).fillMaxHeight()) { Cell(lib, e) }
+                                repeat(columns - rows[r].size) { Spacer(Modifier.weight(1f)) }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -711,11 +725,14 @@ private fun Cell(lib: LibraryState, e: Entry) {
                 )
             } else Modifier)
             .combinedClickable(onClick = { lib.activate(e) })
+            .fillMaxHeight()
             .padding(start = 4.dp, end = 4.dp, top = 14.dp, bottom = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
     ) {
-        Box(Modifier.height(200.dp).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
+        // A notebook's cover may be any shape up to 150 x 200; a folder is only as tall as its art,
+        // so a row of folders does not stand in empty space.
+        Box(Modifier.then(if (e.isDir) Modifier else Modifier.height(200.dp)).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
             Box {
                 if (e.isDir) {
                     val (color, icon) = store.folderStyle(e.file)
@@ -733,8 +750,9 @@ private fun Cell(lib: LibraryState, e: Entry) {
             }
         }
         PopButton({ open ->
+            // The name on up to three lines, in the middle: a long name is read, not cut at one line.
             Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = open).padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Label(e.name, 15f, maxLines = 1, modifier = Modifier.widthIn(max = 140.dp))
+                Label(e.name, 15f, maxLines = 3, modifier = Modifier.weight(1f, fill = false), align = androidx.compose.ui.text.style.TextAlign.Center)
                 Icon("chevron", size = 14.dp)
             }
         }) { close -> MenuList(cellMenu(lib, e), close) }
