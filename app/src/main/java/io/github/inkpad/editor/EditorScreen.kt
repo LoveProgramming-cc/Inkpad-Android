@@ -44,6 +44,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -130,6 +132,7 @@ class EditorState(val app: AppModel, val session: EditorSession) : CanvasHost {
     var page by mutableIntStateOf(0)
     var zoom by mutableIntStateOf(100)
     val selTick = mutableIntStateOf(0)
+    var picking by mutableStateOf(false)   // the eyedropper waits for a tap on the page
     var menuAt by mutableStateOf<Pair<Double, Double>?>(null)
     var textAsk by mutableStateOf<Triple<Pair<Double, Double>, String?, (String?) -> Unit>?>(null)
     var prompt by mutableStateOf<Triple<String, String, (String?) -> Unit>?>(null)
@@ -447,6 +450,8 @@ fun EditorScreen(app: AppModel, session: EditorSession) {
             c.setDocument(session.doc)
             app.viewOf(session.doc.id)?.let { c.restoreMemo(it) }
             session.onReplaced = { ed.syncCanvas() }
+            c.setOnDragListener { _, ev -> pictureDrop(ed, c, ev) }
+            c.onPicking = { ed.picking = it }
         }
     }
     LaunchedEffect(p.dark) {
@@ -474,6 +479,11 @@ fun EditorScreen(app: AppModel, session: EditorSession) {
                         Floating(ed, compact)
                         SelectionBar(ed)
                         if (ed.finding) FindBar(ed, Modifier.align(Alignment.TopEnd).padding(top = 62.dp, end = 12.dp))
+                        if (ed.picking) Pill(Modifier.align(Alignment.TopCenter).padding(top = 62.dp)) {
+                            Icon("pipette", size = 18.dp)
+                            Label(tr("点按页面上的颜色"), 14f, modifier = Modifier.padding(horizontal = 8.dp))
+                            PillButton(wide = true, onClick = { ed.canvas.cancelPick() }) { Label(tr("取消"), 14f) }
+                        }
                         if (session.doc.pages[0].board) Minimap(ed, Modifier.align(Alignment.BottomStart).padding(14.dp))
                     }
                     ed.menuAt?.let { (x, y) -> CanvasMenu(ed, x, y) }
@@ -1080,7 +1090,7 @@ private fun PalettePanel(ed: EditorState, colorsKey: String, indexKey: String, a
         ed.save()
         close()
     }
-    Column(Modifier.width(240.dp)) {
+    Column(Modifier.width(if (custom) 320.dp else 240.dp)) {
         PanelTitle(if (add) tr("添加颜色") else if (colorsKey == "pen_colors") tr("笔颜色") else tr("荧光笔颜色"))
         val all = PALETTE.map { Pair(it, false) } + listOf(Pair(doubleArrayOf(), true))
         for (row in all.chunked(5)) {
@@ -1093,7 +1103,7 @@ private fun PalettePanel(ed: EditorState, colorsKey: String, indexKey: String, a
                 }
             }
         }
-        if (custom) CustomColor(current ?: doubleArrayOf(0.0, 0.0, 0.0)) { choose(it) }
+        if (custom) CustomColor(ed, current ?: doubleArrayOf(0.0, 0.0, 0.0), close) { choose(it) }
         if (!add && colors.size > 1) {
             Box(Modifier.padding(vertical = 4.dp).fillMaxWidth().height(1.dp).background(palette.ink(0.1f)))
             MenuList(listOf(MenuItem(tr("删除此颜色"), danger = true) {
@@ -1105,28 +1115,112 @@ private fun PalettePanel(ed: EditorState, colorsKey: String, indexKey: String, a
     }
 }
 
-/** A colour of one's own: hue, saturation and brightness sliders. */
+/** A colour of one's own, as iOS's colour picker offers it: a grid of colours or a spectrum
+ *  (saturation and brightness across a square, the hue along a bar), the colour taken from the page
+ *  with an eyedropper, and its hex code. */
 @Composable
-private fun CustomColor(start: DoubleArray, done: (DoubleArray) -> Unit) {
-    val hsv = remember { FloatArray(3).also { android.graphics.Color.colorToHSV(argb(start), it) } }
-    var tick by remember { mutableIntStateOf(0) }
-    tick.let { }
-    val now = run {
-        val c = android.graphics.Color.HSVToColor(hsv)
-        doubleArrayOf(android.graphics.Color.red(c) / 255.0, android.graphics.Color.green(c) / 255.0, android.graphics.Color.blue(c) / 255.0)
+private fun CustomColor(ed: EditorState, start: DoubleArray, close: () -> Unit, done: (DoubleArray) -> Unit) {
+    val p = palette
+    val hsv = remember { mutableStateOf(FloatArray(3).also { android.graphics.Color.colorToHSV(argb(start), it) }) }
+    var tab by remember { mutableStateOf("spectrum") }
+    fun rgb(h: FloatArray): DoubleArray {
+        val c = android.graphics.Color.HSVToColor(h)
+        return doubleArrayOf(android.graphics.Color.red(c) / 255.0, android.graphics.Color.green(c) / 255.0, android.graphics.Color.blue(c) / 255.0)
     }
-    Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Swatch(now, size = 30)
-            Label(tr("自定义颜色"), 13f)
-        }
-        for ((i, max) in listOf(0 to 360.0, 1 to 1.0, 2 to 1.0)) {
-            Slider(hsv[i].toDouble(), 0.0, max) {
-                hsv[i] = it.toFloat()
-                tick++
+    fun hex(c: DoubleArray) = "#%02X%02X%02X".format((c[0] * 255).roundToInt(), (c[1] * 255).roundToInt(), (c[2] * 255).roundToInt())
+    val now = rgb(hsv.value)
+    var hexText by remember { mutableStateOf(hex(start)) }
+    Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        io.github.inkpad.ui.Linked(listOf("grid" to tr("网格"), "spectrum" to tr("光谱")), tab, Modifier.fillMaxWidth()) { tab = it }
+        if (tab == "grid") {
+            // The grid of iOS's picker: twelve hues across, from light to dark down, greys on top.
+            val cols = 12
+            val rows = 8
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))) {
+                for (r in 0 until rows) Row {
+                    for (c in 0 until cols) {
+                        val col = if (r == 0) { val v = 1f - c / (cols - 1f); FloatArray(3).also { it[2] = v } }
+                            else floatArrayOf(c * 360f / cols, if (r <= 3) 0.25f + 0.25f * r else 1f, if (r <= 3) 1f else 1f - (r - 3) * 0.17f)
+                        val rgbC = rgb(col)
+                        Box(Modifier.weight(1f).aspectRatio(1f).background(Color(argb(rgbC))).clickable {
+                            hsv.value = col.copyOf()
+                            hexText = hex(rgbC)
+                        })
+                    }
+                }
             }
+        } else {
+            // Saturation across, brightness down, for the hue on the bar below.
+            val h = hsv.value[0]
+            Box(Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(8.dp))
+                .pointerInput(Unit) {
+                    fun at(o: androidx.compose.ui.geometry.Offset) {
+                        val v = hsv.value.copyOf()
+                        v[1] = (o.x / size.width).coerceIn(0f, 1f)
+                        v[2] = 1f - (o.y / size.height).coerceIn(0f, 1f)
+                        hsv.value = v
+                        hexText = hex(rgb(v))
+                    }
+                    awaitEachGesture {
+                        val d = awaitFirstDown()
+                        at(d.position)
+                        do {
+                            val ev = awaitPointerEvent()
+                            ev.changes.firstOrNull()?.let { at(it.position); it.consume() }
+                        } while (ev.changes.any { it.pressed })
+                    }
+                }
+                .drawBehind {
+                    drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color.White, Color(android.graphics.Color.HSVToColor(floatArrayOf(h, 1f, 1f))))))
+                    drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
+                    val x = hsv.value[1] * size.width
+                    val y = (1f - hsv.value[2]) * size.height
+                    drawCircle(Color.White, 9.dp.toPx(), androidx.compose.ui.geometry.Offset(x, y), style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()))
+                    drawCircle(Color.Black.copy(alpha = 0.3f), 10.5f.dp.toPx(), androidx.compose.ui.geometry.Offset(x, y), style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx()))
+                })
+            Box(Modifier.fillMaxWidth().height(28.dp).clip(CircleShape)
+                .pointerInput(Unit) {
+                    fun at(o: androidx.compose.ui.geometry.Offset) {
+                        val v = hsv.value.copyOf()
+                        v[0] = (o.x / size.width).coerceIn(0f, 1f) * 360f
+                        if (v[1] < 0.05f) v[1] = 1f   // from grey a hue means a colour
+                        if (v[2] < 0.05f) v[2] = 1f
+                        hsv.value = v
+                        hexText = hex(rgb(v))
+                    }
+                    awaitEachGesture {
+                        val d = awaitFirstDown()
+                        at(d.position)
+                        do {
+                            val ev = awaitPointerEvent()
+                            ev.changes.firstOrNull()?.let { at(it.position); it.consume() }
+                        } while (ev.changes.any { it.pressed })
+                    }
+                }
+                .drawBehind {
+                    drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient((0..6).map { Color(android.graphics.Color.HSVToColor(floatArrayOf(it * 60f, 1f, 1f))) }))
+                    val x = hsv.value[0] / 360f * size.width
+                    drawCircle(Color.White, size.height / 2 - 2.dp.toPx(), androidx.compose.ui.geometry.Offset(x.coerceIn(size.height / 2, size.width - size.height / 2), size.height / 2), style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()))
+                })
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PillButton(onClick = {
+                // The panel goes, and the colour is taken from the page (see PageCanvas.pickColor).
+                close()
+                ed.canvas.pickColor { c -> done(c) }
+            }) { Icon("pipette", size = 20.dp) }
+            Swatch(now, size = 30)
+            Box(Modifier.weight(1f)) {
+                Field(hexText, { t ->
+                    hexText = t
+                    val m = Regex("^#?([0-9a-fA-F]{6})$").find(t.trim())
+                    if (m != null) {
+                        val v = m.groupValues[1].toLong(16)
+                        val c = doubleArrayOf(((v shr 16) and 255) / 255.0, ((v shr 8) and 255) / 255.0, (v and 255) / 255.0)
+                        hsv.value = FloatArray(3).also { android.graphics.Color.colorToHSV(argb(c), it) }
+                    }
+                }, "#RRGGBB", focus = false)
+            }
             io.github.inkpad.ui.DialogButton(tr("确定"), suggested = true) { done(now) }
         }
     }
@@ -1425,4 +1519,43 @@ private fun ExportDialog(req: ExportRequest, total: Int, dismiss: () -> Unit) {
             }
         }
     }
+}
+
+
+/** Pictures dragged in from another app (side by side, or from a floating window) are put on the
+ *  page where they are let go, selected, as an inserted picture is. */
+private fun pictureDrop(ed: EditorState, c: PageCanvas, ev: android.view.DragEvent): Boolean {
+    val images = ev.clipDescription?.let { d -> (0 until d.mimeTypeCount).any { d.getMimeType(it).startsWith("image/") } } ?: false
+    when (ev.action) {
+        android.view.DragEvent.ACTION_DRAG_STARTED -> return images
+        android.view.DragEvent.ACTION_DROP -> {
+            val clip = ev.clipData ?: return false
+            val activity = io.github.inkpad.Files.activity ?: return false
+            // Another app's file: readable only while this permission is held.
+            val grant = activity.requestDragAndDropPermissions(ev)
+            val dev = c.resources.displayMetrics.density.toDouble()
+            val at = Pair(ev.x / dev, ev.y / dev)
+            val uris = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+            if (uris.isEmpty()) {
+                grant?.release()
+                return false
+            }
+            Thread {
+                val pictures = uris.mapNotNull { uri ->
+                    runCatching {
+                        val bytes = activity.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                        io.github.inkpad.render.Pictures.convert(bytes)
+                    }.getOrNull()
+                }
+                grant?.release()
+                c.post {
+                    if (pictures.isEmpty()) ed.app.show(tr("无法读取图片"))
+                    for ((png, w, h) in pictures) c.insertImage(png, w, h, at)
+                    ed.tool = "lasso"
+                }
+            }.start()
+            return true
+        }
+    }
+    return images
 }

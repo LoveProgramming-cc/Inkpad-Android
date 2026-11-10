@@ -61,6 +61,22 @@ const val MAX_PIXELS = 12_000_000   // pages bigger than this on screen are cach
 const val STRIP = 256               // windows are aligned to this many pixels, so they need not move at every scroll
 const val MIN_ZOOM = 0.2
 const val BOARD_MIN_ZOOM = 0.04
+/** How long before a touch the pen is looked for writing lightly (see lightStart). */
+const val LIGHT_ENDS_MS = 40.0
+/** How long after a lift. */
+const val LIGHT_ENDS_AFTER_MS = 25.0
+/** At most this much line, in dp, is added at the start and at the end (measured: 8 to 11 dp
+ *  of pen movement either side; more than 6 at the start was felt as a line begun too early). */
+const val LIGHT_START_DP = 6.0
+const val LIGHT_END_DP = 8.0
+/** The light start must come in within 25 degrees of the line's own direction, the end go on
+ *  within 35. */
+const val LIGHT_START_COS = 0.9
+const val LIGHT_ENDS_COS = 0.82
+/** The sideways speed, in dp a second, at which a "hovering" pen is taken to be writing. */
+const val LIGHT_ENDS_SPEED = 90.0
+/** The tools whose strokes get their light ends back. */
+val LIGHT_ENDS_TOOLS = setOf("pen", "hl", "tape", "eraser")
 const val BG_KEEP = 8               // PDF page backgrounds remembered after they scroll out of view
 const val CHUNK = 48                // live stroke points rasterised per baked chunk
 const val LASER_HOLD_MS = 1000L     // a laser trail stays this long after the last stroke
@@ -1180,6 +1196,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         }
         canvas.restore()
         drawBars(canvas)
+        drawLoupe(canvas)
     }
 
     // -- following the fingers past the edges -------------------------------------------------------
@@ -1325,8 +1342,87 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     }
 
     @SuppressLint("ClickableViewAccessibility")
+    // -- the eyedropper ---------------------------------------------------------------------------------
+    //
+    // The colour is read off what the screen shows (a copy of the window taken as picking starts):
+    // the page, its paper, a PDF under it and the ink on it, as they look. While the finger or the
+    // pen is down a loupe shows the colour under it; letting go takes it.
+
+    private var picking: ((DoubleArray) -> Unit)? = null
+    private var pickShot: Bitmap? = null
+    private var pickLoupe: Triple<Float, Float, Int>? = null   // view pixels and the colour there
+    /** Told when picking starts and ends, for the bar that says what to do. */
+    var onPicking: ((Boolean) -> Unit)? = null
+
+    fun pickColor(then: (DoubleArray) -> Unit) {
+        picking = then
+        onPicking?.invoke(true)
+        // A moment for the colour panel to close, then the window as it looks.
+        handler.postDelayed({ capturePick() }, 250)
+    }
+
+    fun cancelPick() {
+        picking = null
+        pickShot?.recycle()
+        pickShot = null
+        pickLoupe = null
+        onPicking?.invoke(false)
+        invalidate()
+    }
+
+    private fun capturePick() {
+        if (picking == null || width <= 0 || height <= 0) return
+        val window = io.github.inkpad.Files.activity?.window ?: return
+        val loc = IntArray(2)
+        getLocationInWindow(loc)
+        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        android.view.PixelCopy.request(window, android.graphics.Rect(loc[0], loc[1], loc[0] + width, loc[1] + height), bmp, { result ->
+            if (result == android.view.PixelCopy.SUCCESS && picking != null) pickShot = bmp else bmp.recycle()
+        }, handler)
+    }
+
+    private fun pickEvent(e: MotionEvent) {
+        val shot = pickShot
+        val x = e.x.coerceIn(0f, width - 1f)
+        val y = e.y.coerceIn(0f, height - 1f)
+        val c = shot?.getPixel(x.toInt().coerceIn(0, shot.width - 1), y.toInt().coerceIn(0, shot.height - 1))
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> pickLoupe = c?.let { Triple(x, y, it) }
+            MotionEvent.ACTION_UP -> {
+                val then = picking
+                cancelPick()
+                if (c != null && then != null) then(doubleArrayOf(android.graphics.Color.red(c) / 255.0, android.graphics.Color.green(c) / 255.0, android.graphics.Color.blue(c) / 255.0))
+            }
+            MotionEvent.ACTION_CANCEL -> pickLoupe = null
+        }
+        invalidate()
+    }
+
+    /** The loupe over the point being picked: the colour there in a ring, above the finger. */
+    private fun drawLoupe(canvas: Canvas) {
+        val (x, y, c) = pickLoupe ?: return
+        val d = dev.toFloat()
+        val cy = if (y > 90 * d) y - 64 * d else y + 64 * d
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = 0x40000000
+        canvas.drawCircle(x, cy + 2 * d, 31 * d, paint)
+        paint.color = android.graphics.Color.WHITE
+        canvas.drawCircle(x, cy, 30 * d, paint)
+        paint.color = c
+        canvas.drawCircle(x, cy, 25 * d, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.5f * d
+        paint.color = 0xCC1A1A1A.toInt()
+        canvas.drawCircle(x, y, 6 * d, paint)
+    }
+
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (picking != null) {
+            pickEvent(e)
+            return true
+        }
         val action = e.actionMasked
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) finishLift()
         if (Build.VERSION.SDK_INT >= 34 && predictor != null && e.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
             if (action == MotionEvent.ACTION_DOWN) predicting = predictor.isPredictionAvailable(e.deviceId, e.source)
             if (predicting) predictor.record(e)
@@ -1409,7 +1505,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
                 move(x, y, lastPressure())
                 penDown = false
                 log("pen up, was drawing: ${op?.kind}, ${(op?.item as? io.github.inkpad.core.Stroke)?.pts?.size ?: 0} points")
-                up(x, y)
+                if (op?.kind == "stroke" || op?.kind == "erase") liftLater(e.eventTime, x, y) else up(x, y)
             }
             "touch" -> {
                 rejected.remove(id)
@@ -1518,6 +1614,10 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         hover = null
         // Every sample as it comes rather than gathered once a frame: the line follows sooner.
         requestUnbufferedDispatch(e)
+        // The samples just before, which may be the light start of this line (see lightStart):
+        // whether they are is known once the line has a direction.
+        lightPre = if (tool in LIGHT_ENDS_TOOLS && !erase) lightStart(e.eventTime, x, y) else emptyList()
+        lightFrom = Pair(x, y)
         down(x, y, penPressure(e.getPressure(i).toDouble(), e.eventTime), erase)
         log("pen down at ${x.roundToInt()},${y.roundToInt()} -> ${op?.kind ?: "nothing (text, a selection grabbed, or outside every page)"}")
     }
@@ -1534,7 +1634,157 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         penAt = Pair(x, y)
         if (TRIAL) log("pen move: pressure ${"%.3f".format(e.getPressure(i))} history ${e.historySize}")
         move(x, y, penPressure(e.getPressure(i).toDouble(), e.eventTime))
+        if (lightPre.isNotEmpty()) settleLightStart()
         predict(e)
+    }
+
+    // -- the light ends of a stroke -------------------------------------------------------------------
+    //
+    // A vivo Pencil 3 is reported as touching only once it presses at about a tenth of its range;
+    // lighter than that it is "hovering", although it is on the glass and writing. Measured on a
+    // vivo Pad5 Pro, in the 40 ms before every touch and after every lift the pen went on at the
+    // speed of the ink (some 200 to 300 dp/s), 8 to 11 dp (two millimetres): the start and the end
+    // of every stroke were left out. A pen that really hovers comes down or goes up nearly
+    // straight, hardly moving sideways; one still writing moves as fast as it writes. So the
+    // hover samples next to a stroke that move at writing speed are taken into it.
+
+    /** Recent hover samples of the pen: (event time ms, x dp, y dp), oldest first. */
+    private val hoverTrail = ArrayDeque<Triple<Double, Double, Double>>()
+    private var liftTimer: Runnable? = null
+    private var liftT = 0.0
+    private var liftPoint = Pair(0.0, 0.0)
+
+    private fun noteHover(e: MotionEvent) {
+        val add = { t: Long, x: Float, y: Float ->
+            val pt = Triple(t.toDouble(), x / dev, y / dev)
+            hoverTrail.addLast(pt)
+            if (liftTimer != null) lightEnd(pt)
+        }
+        for (k in 0 until e.historySize) add(e.getHistoricalEventTime(k), e.getHistoricalX(k), e.getHistoricalY(k))
+        add(e.eventTime, e.x, e.y)
+        while (hoverTrail.isNotEmpty() && e.eventTime - hoverTrail.first().first > LIGHT_ENDS_MS * 2) hoverTrail.removeFirst()
+    }
+
+    /** The hover samples just before a pen came down at (x, y) that moved at writing speed, oldest
+     *  first, or none: candidates for the light start of the line, judged in settleLightStart. */
+    private fun lightStart(t: Long, x: Double, y: Double): List<Triple<Double, Double, Double>> {
+        val recent = hoverTrail.filter { t - it.first in 0.0..LIGHT_ENDS_MS }
+        hoverTrail.clear()
+        val kept = ArrayList<Triple<Double, Double, Double>>()
+        var nt = t.toDouble()
+        var nx = x
+        var ny = y
+        for (h in recent.reversed()) {
+            val dt = (nt - h.first) / 1000
+            if (dt <= 0) continue
+            if (dt > 0.02 || hypot(nx - h.second, ny - h.third) / dt < LIGHT_ENDS_SPEED) break
+            kept.add(h)
+            nt = h.first
+            nx = h.second
+            ny = h.third
+        }
+        return kept.reversed()
+    }
+
+    private var lightPre: List<Triple<Double, Double, Double>> = emptyList()
+    private var lightFrom = Pair(0.0, 0.0)
+
+    /** Once the line has gone some way, the samples before its start that lie on its way in, short
+     *  of LIGHT_START_DP, become its light start. A pen moving through the air to the next stroke
+     *  comes from another direction, or from further away, and is left out: the strokes would join. */
+    private fun settleLightStart() {
+        val o = op
+        val item = o?.item as? io.github.inkpad.core.Stroke
+        val (x0, y0) = lightFrom
+        if (o == null || o.kind != "stroke" || item == null) { lightPre = emptyList(); return }
+        val (cx, cy) = penAt
+        if (hypot(cx - x0, cy - y0) < 4) return   // no direction yet
+        val dx = (cx - x0) / hypot(cx - x0, cy - y0)
+        val dy = (cy - y0) / hypot(cx - x0, cy - y0)
+        val taken = ArrayList<Triple<Double, Double, Double>>()
+        var ax = x0
+        var ay = y0
+        var length = 0.0
+        for (h in lightPre.reversed()) {
+            val sx = ax - h.second
+            val sy = ay - h.third
+            val seg = hypot(sx, sy)
+            if (seg < 0.01) continue
+            // Coming in along the line: within 35 degrees of its first direction.
+            if ((sx * dx + sy * dy) / seg < LIGHT_START_COS || length + seg > LIGHT_START_DP) break
+            length += seg
+            taken.add(h)
+            ax = h.second
+            ay = h.third
+        }
+        lightPre = emptyList()
+        if (taken.isEmpty() || o.fixed || o.rule != null) return
+        val p0 = item.pts.first()[2]
+        val pts = taken.reversed().map { h -> val (px, py) = toPage(o.i, h.second, h.third); doubleArrayOf(px, py, p0) }
+        item.pts.addAll(0, pts)
+        log("pen down: ${pts.size} light samples before it taken in (${"%.1f".format(length)} dp)")
+        invalidate()
+    }
+
+    /** The pen left the glass (or seemed to) at (x, y): the stroke stays open a moment for its light end. */
+    private fun liftLater(t: Long, x: Double, y: Double) {
+        lightPre = emptyList()
+        liftT = t.toDouble()
+        liftT0 = liftT
+        liftPoint = Pair(x, y)
+        liftLength = 0.0
+        // The way the line was going as it lifted: from a few points back.
+        val pts = (op?.item as? io.github.inkpad.core.Stroke)?.pts
+        liftDir = null
+        if (pts != null && pts.size >= 2) {
+            val a = pts[max(0, pts.size - 4)]
+            val b = pts.last()
+            val d = hypot(b[0] - a[0], b[1] - a[1])
+            if (d > 0.3) liftDir = Pair((b[0] - a[0]) / d, (b[1] - a[1]) / d)
+        }
+        hoverTrail.clear()
+        val r = Runnable { finishLift() }
+        liftTimer = r
+        handler.postDelayed(r, LIGHT_ENDS_AFTER_MS.toLong() + 10)
+    }
+
+    private var liftT0 = 0.0
+    private var liftLength = 0.0
+    private var liftDir: Pair<Double, Double>? = null
+
+    /** A hover sample after a lift: part of the stroke while it goes on the way the line went, at
+     *  writing speed, briefly and not far. */
+    private fun lightEnd(h: Triple<Double, Double, Double>) {
+        val dt = (h.first - liftT) / 1000
+        if (dt <= 0) return
+        val sx = h.second - liftPoint.first
+        val sy = h.third - liftPoint.second
+        val seg = hypot(sx, sy)
+        val dir = liftDir
+        val o = op
+        val i = o?.i
+        val along = dir != null && seg > 0.01 && i != null && run {
+            // liftDir is in page points; the page is not turned, so the screen direction is the same.
+            (sx * dir.first + sy * dir.second) / seg >= LIGHT_ENDS_COS
+        }
+        if (h.first - liftT0 > LIGHT_ENDS_AFTER_MS || dt > 0.02 || seg / dt < LIGHT_ENDS_SPEED || !along || liftLength + seg > LIGHT_END_DP) {
+            finishLift()
+            return
+        }
+        move(h.second, h.third, lastPressure())
+        liftLength += seg
+        liftT = h.first
+        liftPoint = Pair(h.second, h.third)
+        penAt = liftPoint
+        invalidate()
+    }
+
+    /** End the stroke whose lift was waiting for its light end. */
+    private fun finishLift() {
+        val r = liftTimer ?: return
+        liftTimer = null
+        handler.removeCallbacks(r)
+        up(liftPoint.first, liftPoint.second)
     }
 
     override fun onHoverEvent(e: MotionEvent): Boolean {
@@ -1546,10 +1796,15 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
                 if (kind == "pen") {
                     hasPen = true
                     penSeen = mono()
+                    noteHover(e)
                 }
                 hover = if (kind == "pen" || (hasPen && kind == "mouse")) Pair(e.x / dev, e.y / dev) else null
             }
-            MotionEvent.ACTION_HOVER_EXIT -> hover = null
+            MotionEvent.ACTION_HOVER_EXIT -> {
+                hover = null
+                hoverTrail.clear()
+                finishLift()
+            }
         }
         if (hover != null || was != null) invalidate()
         return true
