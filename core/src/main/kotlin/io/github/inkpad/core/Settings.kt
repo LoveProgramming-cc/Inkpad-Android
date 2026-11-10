@@ -50,6 +50,7 @@ object Settings {
         "hold_shape" to true,
         "scribble_erase" to true,
         "scribble_loose" to false,   // the earlier rule (B:geom.py _loose)
+        "scribble_toast" to true,    // after scribbling something out, say how much, with Undo
         "finger_draw" to false,
         "template" to linkedMapOf("w" to 595.0, "h" to 842.0, "paper" to "blank", "color" to d(1.0, 1.0, 1.0)),
         "sort" to "date",

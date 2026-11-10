@@ -114,6 +114,7 @@ fun SettingsScreen(app: AppModel, close: () -> Unit) {
                         for ((key, title, sub) in listOf(
                             Triple("scribble_erase", "涂画以擦除", null),
                             Triple("scribble_loose", "宽松的涂抹删除", "使用旧的判定方式：更容易删掉，但连笔写字时可能被当成涂抹"),
+                            Triple("scribble_toast", "涂画擦除后显示撤销提示", "擦掉后在底部提示擦除了几项，可点“撤销”"),
                             Triple("hold_shape", "长按绘制规则形状", "画完停住片刻，笔迹变成直线、矩形或椭圆"),
                             Triple("finger_draw", "用手指书写", "打开后单指书写，双指滚动和缩放"),
                             Triple("crosshair", "显示十字光标", null),

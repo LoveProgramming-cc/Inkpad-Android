@@ -165,6 +165,7 @@ class EditorState(val app: AppModel, val session: EditorSession) : CanvasHost {
     }
 
     override fun scribbled(n: Int) {
+        if (st["scribble_toast"] == false) return   // Settings: no word after scribbling out
         app.show(trf("已擦除 %d 项", n), tr("撤销")) {
             canvas.cancel()
             canvas.clearSelection()
