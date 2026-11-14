@@ -570,4 +570,67 @@ class SyncTest {
         assertEquals(0, LibrarySync.sync(a, FakeDrive(cloud), skip = listOf(note)).up)
         assertEquals(1, sync(a).up)
     }
+
+    /** A notebook brought back after another device followed its deletion stays back. */
+    @Test
+    fun broughtBackStaysBack() {
+        val storeA = Store(a); val storeB = Store(b)
+        val folder = storeA.newFolder(storeA.root, "课程")
+        storeA.newNotebook(folder, template, name = "数学")
+        val loose = storeA.newNotebook(storeA.root, template, name = "散页")
+        sync(a); sync(b); sync(a)
+        val both = listOf("散页.inkpad", "课程/数学.inkpad")
+
+        // A folder put in the trash, followed by the other device, then put back.
+        storeA.trash(folder)
+        sync(a); sync(b); sync(a)
+        assertEquals(listOf("散页.inkpad"), books(b))
+        assertTrue(File(b, ".trash/课程/数学.inkpad").isFile)
+        storeA.restore(storeA.trashed()[0].file)
+        repeat(3) { sync(a); sync(b) }
+        assertEquals(both, books(a))
+        assertEquals(both, books(b))
+        assertTrue(storeB.trashed().isEmpty(), "no empty folder left in the trash")
+
+        // Deleted for good, followed, then fetched back from the cloud.
+        storeA.trash(loose)
+        storeA.delete(storeA.trashed()[0].file)
+        sync(a); sync(b); sync(a)
+        val gone = LibrarySync.cloudDeleted(a, FakeDrive(cloud))
+        LibrarySync.cloudRestore(a, FakeDrive(cloud), gone.map { it.id })
+        repeat(3) { sync(a); sync(b) }
+        assertEquals(both, books(a))
+        assertEquals(both, books(b))
+
+        // ...or put back from the trash on the device that followed.
+        storeA.trash(loose)
+        storeA.delete(storeA.trashed()[0].file)
+        sync(a); sync(b); sync(a); sync(b)
+        storeB.restore(storeB.trashed()[0].file)
+        repeat(3) { sync(b); sync(a) }
+        assertEquals(both, books(a))
+        assertEquals(both, books(b))
+    }
+
+    /** Favourites are not written over by a device that only trashed something. */
+    @Test
+    fun staleFavouritesStayStale() {
+        val storeA = Store(a); val storeB = Store(b)
+        val one = storeA.newNotebook(storeA.root, template, name = "一")
+        storeA.newNotebook(storeA.root, template, name = "二")
+        sync(a); sync(b)
+        storeA.toggleFavorite(one)
+        sync(a)
+        storeB.trash(File(b, "二.inkpad"))
+        sync(b); sync(a)
+        storeA.reloadMeta(); storeB.reloadMeta()
+        assertEquals(listOf("一"), storeA.favorites().map { it.name })
+        assertEquals(listOf("一"), storeB.favorites().map { it.name })
+    }
+
+    @Test
+    fun namesTheLibraryCanShow() {
+        val store = Store(a)
+        assertEquals("隐藏-文件夹", store.newFolder(store.root, ".隐藏/文件夹").name)
+    }
 }

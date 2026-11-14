@@ -492,8 +492,11 @@ class Document(template: Template? = null) {
 }
 
 /** A file held open, so that what was read from it stays readable after it is replaced. */
-class OpenFile(file: File) : Source {
+class OpenFile(file: File) : Source, java.io.Closeable {
     private val raf = java.io.RandomAccessFile(file, "r")
+
+    /** Only for a file read through and done with: one a document loaded from keeps reading it. */
+    override fun close() = raf.close()
     override val size: Long = raf.length()
 
     @Synchronized
@@ -585,14 +588,16 @@ fun merge(mine: Document, theirs: Document): IntArray {
 
 /** The stable id of a notebook file, giving it one if it predates ids. */
 fun notebookId(file: File): String = fileLock.withLock {
-    val z = ZipReader.open(OpenFile(file))
-    if (z.has("id")) return z.text("id")
-    val id = Ids.hex()
-    rewrite(file) { w ->
-        for (e in z.entries) w.addRaw(e.name, e.method, e.crc, e.size, z.raw(e))
-        w.add("id", id, compress = false)
+    OpenFile(file).use { src ->
+        val z = ZipReader.open(src)
+        if (z.has("id")) return z.text("id")
+        val id = Ids.hex()
+        rewrite(file) { w ->
+            for (e in z.entries) w.addRaw(e.name, e.method, e.crc, e.size, z.raw(e))
+            w.add("id", id, compress = false)
+        }
+        id
     }
-    id
 }
 
 /** Give a notebook file a different id (a copy made outside the app shares its original's). */

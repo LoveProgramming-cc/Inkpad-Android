@@ -48,7 +48,12 @@ class Store(root: File) {
     }
 
     private fun saveMeta() {
-        meta["ts"] = Clock.now()
+        // The time stamp says when the favourites and folder styles, the part that is synced
+        // whole (newer wins), were last changed here: other changes leave it, or a device with
+        // stale favourites that trashed a notebook would write them over everyone's.
+        val old = loadJson(metaFile)
+        fun shared(m: Map<String, Any?>) = JsonOut.write(linkedMapOf("f" to (m["favorites"] ?: emptyList<Any?>()), "d" to (m["folders"] ?: emptyMap<String, Any?>())))
+        if (shared(old) != shared(meta)) meta["ts"] = Clock.now()
         saveJson(metaFile, meta)
     }
 
@@ -388,7 +393,9 @@ class Store(root: File) {
         const val ARCHIVE_META = "inkpad-library.json"
 
         /** A name not taken in [folder]: "name", then "name 2", "name 3"... */
-        fun unique(folder: File, name: String, ext: String = ""): File {
+        fun unique(folder: File, name0: String, ext: String = ""): File {
+            // A name is made one the library can show: no slash (it would be a folder), no dot to begin with (a hidden file, which the library never shows).
+            val name = name0.trim().replace('/', '-').trimStart('.').trim().ifEmpty { tr("未命名") }
             var f = File(folder, name + ext)
             var n = 2
             while (f.exists()) {

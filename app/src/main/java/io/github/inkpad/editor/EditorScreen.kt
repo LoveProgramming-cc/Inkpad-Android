@@ -246,6 +246,13 @@ class EditorState(val app: AppModel, val session: EditorSession) : CanvasHost {
         optionsTick.intValue++
     }
 
+    /** As [save], for a slider on the move: the file is written when it comes to rest. */
+    fun saveSoon() {
+        app.saveSettingsSoon()
+        syncCanvas()
+        optionsTick.intValue++
+    }
+
     /** Tapping the tool that is already selected hides or shows its options bar. */
     fun toolClicked(name: String) {
         if (name == tool) {
@@ -523,7 +530,37 @@ fun EditorScreen(app: AppModel, session: EditorSession) {
             if (ok) ed.doc.setCover(chosen)
         }
     }
-    DisposableEffect(session) { onDispose { } }
+    DisposableEffect(session) {
+        onDispose {
+            // The window is going (the screen turned, the app was put in a split screen) while
+            // the notebook stays open: this canvas lets go of its pages, and the one made for the
+            // new window takes over where the view was.
+            if (session.canvas === canvas) {
+                canvas.finishLift()
+                canvas.viewMemo()?.let { app.rememberView(session.doc.id, it) }
+                canvas.release()
+                session.canvas = null
+            }
+        }
+    }
+    ImmersiveWhileEditing()
+}
+
+/** While a notebook is open the navigation bar steps aside: a hand writing near the bottom edge
+ *  then only brings the bar back for a moment, and it takes a second swipe to leave the app.
+ *  (Android lets no app keep the home gesture to itself; this is what it allows.) */
+@Composable
+private fun ImmersiveWhileEditing() {
+    val view = androidx.compose.ui.platform.LocalView.current
+    DisposableEffect(view) {
+        val window = (view.context as? android.app.Activity)?.window
+            ?: generateSequence(view.context) { (it as? android.content.ContextWrapper)?.baseContext }
+                .filterIsInstance<android.app.Activity>().firstOrNull()?.window
+        val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, it.decorView) }
+        controller?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+        onDispose { controller?.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars()) }
+    }
 }
 
 // -- header ----------------------------------------------------------------------------------------
@@ -1012,7 +1049,7 @@ private fun PenPanel(ed: EditorState) {
         Box(Modifier.padding(horizontal = 8.dp)) {
             Slider(pct.toDouble(), 0.0, 100.0) {
                 widths[slot] = (pctToWidth(it.roundToInt()) * 100).roundToInt() / 100.0
-                ed.save()
+                ed.saveSoon()
             }
         }
         for ((key, label) in listOf("sens" to "压力灵敏度", "stab" to "画笔稳定性")) {
@@ -1024,7 +1061,7 @@ private fun PenPanel(ed: EditorState) {
             Box(Modifier.padding(horizontal = 8.dp)) {
                 Slider(v.toDouble(), 0.0, 100.0) {
                     pen[key] = it.roundToInt().toLong()
-                    ed.save()
+                    ed.saveSoon()
                 }
             }
         }
@@ -1061,7 +1098,7 @@ private fun WidthPanel(ed: EditorState, widths: MutableList<Any?>, slot: Int, lo
             Box(Modifier.weight(1f)) {
                 Slider(w, low, high) {
                     widths[slot] = (it * 10).roundToInt() / 10.0
-                    ed.save()
+                    ed.saveSoon()
                 }
             }
             PillButton(onClick = {

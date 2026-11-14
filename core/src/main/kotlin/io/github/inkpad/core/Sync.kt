@@ -178,7 +178,10 @@ object LibrarySync {
      */
     fun slim(file: File, dest: File, seen: Map<String, Any?>?, have: (String) -> Boolean): Slimmed {
         val stat = fileSign(file) ?: ""
-        val z = ZipReader.open(OpenFile(file))
+        return OpenFile(file).use { src -> slimFrom(ZipReader.open(src), stat, dest, seen, have) }
+    }
+
+    private fun slimFrom(z: ZipReader, stat: String, dest: File, seen: Map<String, Any?>?, have: (String) -> Boolean): Slimmed {
         val listed = LinkedHashMap<String, Any?>()
         val parts = LinkedHashMap<String, File>()
         val found = LinkedHashMap<String, Any?>()
@@ -210,10 +213,19 @@ object LibrarySync {
      *  of it that is here already ([have]) where that has them, and downloaded with
      *  fetch(name of the blob, where to) otherwise. */
     fun fatten(part: File, have: File?, seen: Map<String, Any?>? = null, fetch: (String, File) -> Unit) {
-        val z = ZipReader.open(OpenFile(part))
+        val partSrc = OpenFile(part)
+        val oldSrc = have?.let { runCatching { OpenFile(it) }.getOrNull() }
+        try {
+            fattenFrom(part, ZipReader.open(partSrc), oldSrc?.let { runCatching { ZipReader.open(it) }.getOrNull() }, seen, fetch)
+        } finally {
+            partSrc.close()
+            oldSrc?.close()
+        }
+    }
+
+    private fun fattenFrom(part: File, z: ZipReader, old: ZipReader?, seen: Map<String, Any?>?, fetch: (String, File) -> Unit) {
         if (!z.has(BLOBS_NAME)) return   // uploaded whole, by an earlier version
         val listed = Json.parse(z.text(BLOBS_NAME)).obj()
-        val old = have?.let { runCatching { ZipReader.open(OpenFile(it)) }.getOrNull() }
         val mine = old?.entries?.filter(::isBlob) ?: emptyList()
         val byOld = mine.associateBy { oldName(it) }
         var bySha: Map<String, ZipEntry>? = null   // worked out when first asked for: it means reading every one of them
@@ -545,8 +557,10 @@ object LibrarySync {
         val skipIds = HashSet<String>()
         val local = LinkedHashMap<String, Local>()
         val (files, _) = scan(root)
+        // The trash, folders put there included: what is in a trashed folder is in the trash too,
+        // not gone. (Taken for gone, it would be passed on to other devices as deleted.)
         val found = files.toSortedMap().map { Local(it.value, it.key, false) } +
-            (trashDir.list() ?: emptyArray()).filter { it.endsWith(EXT) }.sorted().map { Local(File(trashDir, it), it, true) }
+            scan(trashDir).first.toSortedMap().map { Local(it.value, it.key, true) }
         val onlyPaths = only?.map { it.canonicalPath }?.toSet()
         // A notebook that has not been written since the last sync is known by its place: it is not
         // opened to be asked who it is. This device's record of the last sync is the list of what
@@ -591,13 +605,22 @@ object LibrarySync {
         /** Move a local notebook to where the index says it belongs. */
         fun place(nid: String, rel: String, inTrash: Boolean) {
             val path = local[nid]!!.file
-            var target = if (inTrash) File(trashDir, rel.substringAfterLast('/')) else abspath(rel)
+            // In the trash a notebook keeps the folder it was trashed with, as on the device that
+            // trashed the folder, so that putting the folder back brings it along everywhere.
+            var target = if (inTrash) File(trashDir, rel) else abspath(rel)
             if (target.canonicalPath != path.canonicalPath) {
                 target.parentFile.mkdirs()
                 target = unique(target)
                 if (!path.renameTo(target)) throw DriveError(trf("无法移动“%s”", path.name))
+                // A folder in the trash that this leaves empty goes with it.
+                var dir = path.canonicalFile.parentFile
+                val trashPath = trashDir.canonicalPath
+                while (dir != null && dir.path.startsWith(trashPath + File.separator) && dir.list()?.isEmpty() == true) {
+                    dir.delete()
+                    dir = dir.parentFile
+                }
             }
-            local[nid] = Local(target, if (inTrash) target.name else relPath(target, root), inTrash)
+            local[nid] = Local(target, relPath(target, if (inTrash) trashDir else root), inTrash)
         }
 
         /** (what stands for the content, fileSign()) of a notebook here. No notebook is read
@@ -795,7 +818,7 @@ object LibrarySync {
                 if (entry.trashed && before == null) continue   // sitting in another device's trash; no need to fetch it
                 val path = entry.path ?: continue
                 val file = entry.file ?: continue
-                var target = if (entry.trashed) File(trashDir, path.substringAfterLast('/')) else abspath(path)
+                var target = if (entry.trashed) File(trashDir, path) else abspath(path)
                 target.parentFile.mkdirs()
                 target = unique(target)
                 // Put together aside, and moved into the library only when it is whole: a download
@@ -806,22 +829,28 @@ object LibrarySync {
                 replace(coming, target)
                 val st = fileSign(target) ?: ""
                 agreed[nid] = Pair("written $st", st)
-                local[nid] = Local(target, if (entry.trashed) target.name else relPath(target, root), entry.trashed)
+                local[nid] = Local(target, relPath(target, if (entry.trashed) trashDir else root), entry.trashed)
                 summary.down++
             } else if (here != null && entry != null) {
                 val mine = localMd5(nid, here.file).first
                 val wasLocal = (before?.get("local") as? String)?.ifEmpty { null } ?: beforeMd5
                 val unchanged = before != null && mine == wasLocal
                 var content = true
+                // Put back from the trash here since this device last followed a deletion into it.
+                val restored = before?.get("trashed") == true && !here.inTrash
                 if (entry.deleted) {
-                    if (here.inTrash || unchanged) {
-                        // Deleted elsewhere and not edited here since: follow, into the trash.
+                    if (here.inTrash || (unchanged && !restored)) {
+                        // Deleted elsewhere and not edited here since: follow, into the trash. What
+                        // was done is remembered, so that the notebook being brought back, here or
+                        // elsewhere, is told from this device putting it in the trash of its own accord.
                         place(nid, here.rel, true)
-                        known.remove(nid)
+                        val at = local[nid]!!
+                        known[nid] = linkedMapOf("path" to at.rel, "trashed" to true, "md5" to (entry.md5 ?: ""),
+                            "local" to mine, "stat" to (fileSign(at.file) ?: ""))
                         if (!here.inTrash) summary.removed++
                         continue
                     }
-                    push(nid, entry)   // edited after the deletion: the edit wins
+                    push(nid, entry)   // edited, or brought back, after the deletion: that wins
                     content = false
                 }
                 if (content) settle(nid, entry, before)

@@ -133,11 +133,25 @@ class EditorSession(file: File, val app: AppModel) {
     }
 
     fun close() {
+        // A stroke whose lift is still being waited for (its light end) is finished, not lost.
+        canvas?.finishLift()
         canvas?.cancel()
         save(wait = true)
         canvas?.viewMemo()?.let { app.rememberView(doc.id, it) }
         unlisten?.invoke()
         canvas?.release()
+        writer.shutdown()
+    }
+
+    /** The notebook is gone from under the editor (deleted on another device; the sync has put
+     *  it in the trash here): let go of everything, writing nothing, which would bring the file
+     *  back where it was. */
+    fun discard() {
+        canvas?.cancel()
+        unlisten?.invoke()
+        unlisten = null
+        canvas?.release()
+        canvas = null
         writer.shutdown()
     }
 
@@ -231,9 +245,33 @@ class AppModel(val context: Context) {
     }
 
     fun saveSettings() {
+        settingsWrite?.let { settingsHandler.removeCallbacks(it) }
+        settingsWrite = null
         Settings.save(settingsFile, settings)
         settingsTick.intValue++
     }
+
+    /** The same, with the file written a moment later: a slider being dragged changes the
+     *  settings many times a second, and the screen follows at once while the disk is written
+     *  once, when the finger rests. */
+    fun saveSettingsSoon() {
+        settingsTick.intValue++
+        settingsWrite?.let { settingsHandler.removeCallbacks(it) }
+        val write = Runnable {
+            settingsWrite = null
+            Settings.save(settingsFile, settings)
+        }
+        settingsWrite = write
+        settingsHandler.postDelayed(write, 400)
+    }
+
+    /** A write still waiting is done now (the app is leaving the screen). */
+    fun flushSettings() {
+        if (settingsWrite != null) saveSettings()
+    }
+
+    private val settingsHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var settingsWrite: Runnable? = null
 
     // The input log (settings: "record input log"): lines are gathered and written a little later,
     // so that logging costs the pen nothing; the last 300 KB are kept.
@@ -427,7 +465,16 @@ class AppModel(val context: Context) {
             if (found != null) {
                 s.moved(found, sameContent = false)   // renamed or moved on another device
             } else {
-                // Deleted on another device: it is in the trash here now.
+                // Deleted on another device: it is in the trash here now. Edits not yet written
+                // go with it there, rather than being lost.
+                if (s.doc.modified) {
+                    LibrarySync.scan(store.trashDir).first.values.firstOrNull { runCatching { notebookId(it) }.getOrNull() == id }?.let { trashed ->
+                        s.canvas?.finishLift()
+                        s.moved(trashed)
+                        s.save(wait = true)
+                    }
+                }
+                s.discard()
                 session = null
                 show(tr("已删除"))
                 return

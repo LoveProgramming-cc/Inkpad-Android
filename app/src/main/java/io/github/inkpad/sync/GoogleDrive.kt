@@ -226,9 +226,18 @@ class GoogleDrive(private val context: Context) : Drive {
     @Synchronized
     private fun access(): String {
         if (System.currentTimeMillis() / 1000.0 >= ((token["expires_at"] as? Number)?.toDouble() ?: 0.0)) {
-            val fresh = GoogleAccount.post(client["token_uri"] as? String ?: GoogleAccount.TOKEN_URI, mapOf(
-                "client_id" to client["client_id"] as String, "client_secret" to (client["client_secret"] as? String ?: ""),
-                "refresh_token" to token["refresh_token"] as String, "grant_type" to "refresh_token"))
+            val fresh = try {
+                GoogleAccount.post(client["token_uri"] as? String ?: GoogleAccount.TOKEN_URI, mapOf(
+                    "client_id" to client["client_id"] as String, "client_secret" to (client["client_secret"] as? String ?: ""),
+                    "refresh_token" to token["refresh_token"] as String, "grant_type" to "refresh_token"))
+            } catch (e: DriveError) {
+                if (e.message?.contains("invalid_grant") != true) throw e
+                // The sign-in is no longer good (the grant was taken back, the password changed,
+                // or an app still "in testing" let it lapse after a week): it is forgotten, so
+                // that the settings offer to connect again, and the user is told just that.
+                GoogleAccount.tokenFile(context).delete()
+                throw DriveError(tr("Google Drive 的登录已失效，请在设置中重新连接"))
+            }
             token["access_token"] = fresh["access_token"]
             token["expires_at"] = System.currentTimeMillis() / 1000.0 + ((fresh["expires_in"] as? Number)?.toDouble() ?: 3600.0) - 60
             saveJson(GoogleAccount.tokenFile(context), token)

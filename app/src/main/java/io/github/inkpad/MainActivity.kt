@@ -212,6 +212,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
+        app.flushSettings()
         app.phaseChanged(false)
     }
 

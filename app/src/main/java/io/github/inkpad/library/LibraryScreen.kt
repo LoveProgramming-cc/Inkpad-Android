@@ -123,14 +123,16 @@ object Covers {
     fun cached(f: File) = cache.get(key(f))
 
     fun load(f: File): ImageBitmap? = cache.get(key(f)) ?: runCatching {
-        val z = ZipReader.open(OpenFile(f))
-        // A designed cover carries the notebook's name, which is the file's name now, not the one
-        // the stored picture was drawn with (a rename does not redraw it).
-        val spec = io.github.inkpad.core.Document.coverSpecOf(z)
-        if (spec != null) io.github.inkpad.render.renderCover(spec.first, spec.second, f.nameWithoutExtension).asImageBitmap()
-        else {
-            val png = z.bytes("cover.png")
-            BitmapFactory.decodeByteArray(png, 0, png.size)?.asImageBitmap()
+        OpenFile(f).use { src ->
+            val z = ZipReader.open(src)
+            // A designed cover carries the notebook's name, which is the file's name now, not the
+            // one the stored picture was drawn with (a rename does not redraw it).
+            val spec = io.github.inkpad.core.Document.coverSpecOf(z)
+            if (spec != null) io.github.inkpad.render.renderCover(spec.first, spec.second, f.nameWithoutExtension).asImageBitmap()
+            else {
+                val png = z.bytes("cover.png")
+                BitmapFactory.decodeByteArray(png, 0, png.size)?.asImageBitmap()
+            }
         }
     }.getOrNull()?.also { cache.put(key(f), it) }
 }

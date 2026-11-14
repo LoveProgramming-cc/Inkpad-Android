@@ -62,6 +62,12 @@ const val STRIP = 256               // windows are aligned to this many pixels, 
 const val MIN_ZOOM = 0.2
 const val BOARD_MIN_ZOOM = 0.04
 /** How long before a touch the pen is looked for writing lightly (see lightStart). */
+/** A touch contact wider than this (dp, about 17 mm) is no fingertip: a palm, a sleeve. */
+const val PALM_CONTACT_DP = 110.0
+/** How far the fingers must have gone, all told, for letting go to throw the page on. */
+const val FLICK_TRAVEL_DP = 40.0
+/** The fastest a flick throws the page (dp per second). */
+const val FLICK_MAX_SPEED = 6000.0
 const val LIGHT_ENDS_MS = 40.0
 /** How long after a lift. */
 const val LIGHT_ENDS_AFTER_MS = 25.0
@@ -989,7 +995,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     private var jobSeq = 0L
     private var rendering = false
 
-    private class Job(val priority: Int, val seq: Long, val valid: () -> Boolean, val run: () -> Bitmap?, val done: (Bitmap) -> Unit)
+    private class Job(val priority: Int, val seq: Long, val valid: () -> Boolean, val run: () -> Bitmap?, val done: (Bitmap) -> Unit, val failed: () -> Unit = {})
 
     private fun bgKey(page: Page, full: Pair<Int, Int>, win: IntArray) = "${System.identityHashCode(page)}:${full.first}x${full.second}@${win.joinToString(",")}"
 
@@ -1019,7 +1025,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             bmp.eraseColor(android.graphics.Color.WHITE)
             PdfPages.render(page, bmp, win[0] / (full.first / page.w), win[1] / (full.second / page.h), full.first / page.w, full.second / page.h)
             bmp
-        }, done = { bg -> bgReady(page, mark, bg) }))
+        }, done = { bg -> bgReady(page, mark, bg) }, failed = { if (pending[page] === mark) pending.remove(page) }))
         pump()
     }
 
@@ -1060,7 +1066,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
                 if (Geom.intersects(it.bbox, box)) drawItem(cv, env, it)
             }
             bmp
-        }, done = { bmp -> inkReady(page, mark, bmp) }))
+        }, done = { bmp -> inkReady(page, mark, bmp) }, failed = { if (inkPending[page] === mark) inkPending.remove(page) }))
         pump()
     }
 
@@ -1091,10 +1097,18 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             if (!job.valid()) continue
             rendering = true
             RENDERER.execute {
-                val bmp = runCatching { job.run() }.getOrNull()
+                val result = runCatching { job.run() }
+                result.exceptionOrNull()?.let { log("drawing a page failed: $it") }
+                val bmp = result.getOrNull()
                 handler.post {
                     rendering = false
                     if (bmp != null) job.done(bmp)
+                    else {
+                        // Not left waiting for a picture that is not coming (the page would stay
+                        // blank): it is asked for again in a moment, when memory may allow it.
+                        job.failed()
+                        postDelayed({ invalidate() }, 1000)
+                    }
                     pump()
                 }
             }
@@ -1315,6 +1329,8 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     private var pan: DoubleArray? = null        // the middle button moving the page
     private var barStart = Pair(0.0, 0.0)
     internal val touches = LinkedHashMap<Int, Pair<Double, Double>>()
+    /** The size of each touch's contact (dp, the longer axis) as it came down: see [touchSize]. */
+    private val touchSizes = HashMap<Int, Double>()
     private val rejected = HashSet<Int>()
     internal var tg: TouchGesture? = null
     private var fling: Runnable? = null
@@ -1333,6 +1349,8 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         var grab: String? = null   // "move", "copy" or "held"
         var zooming = false        // two fingers have spread or closed enough to zoom
         var pinched = false        // two fingers were down at some point: no page turns until all are up
+        var travel = 0.0           // how far the fingers' middle has gone, all told
+        var unsteady = false       // a contact grew or shrank a lot: a hand or sleeve rolling, not a finger sliding
     }
 
     private fun kindOf(e: MotionEvent, i: Int): String = when (e.getToolType(i)) {
@@ -1471,7 +1489,10 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         if (TRIAL) log("down: ${kindOf(e, i)} id ${e.getPointerId(i)} tool ${e.getToolType(i)} at ${x.roundToInt()},${y.roundToInt()} size ${"%.2f".format(e.getTouchMajor(i))} pressure ${"%.3f".format(e.getPressure(i))} flags ${e.flags}")
         when (kindOf(e, i)) {
             "pen" -> penDownEvent(e, i, x, y)
-            "touch" -> touchDown(e.getPointerId(i), x, y)
+            "touch" -> {
+                touchDown(e.getPointerId(i), x, y)
+                touchSize(e.getPointerId(i), e.getTouchMajor(i) / dev)
+            }
             else -> mouseDownEvent(e, i, x, y)
         }
     }
@@ -1485,7 +1506,10 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
                 penSeen = mono()
                 if (penDown && id == penId) penMove(e, i)
             }
-            "touch" -> if (id in touches) touches[id] = Pair(x, y)
+            "touch" -> if (id in touches) {
+                touches[id] = Pair(x, y)
+                touchSize(id, e.getTouchMajor(i) / dev)
+            }
             else -> mouseMove(e, i, x, y)
         }
     }
@@ -1509,6 +1533,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             }
             "touch" -> {
                 rejected.remove(id)
+                touchSizes.remove(id)
                 if (touches.remove(id) != null) touchReset(x, y, true)
             }
             else -> mouseUp(x, y)
@@ -1530,7 +1555,13 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             }
             "touch" -> {
                 rejected.remove(id)
-                if (touches.remove(id) != null) touchReset(x, y, false)
+                touchSizes.remove(id)
+                // The system took this touch for the palm: what it did to the view is undone.
+                val g = tg
+                if (touches.remove(id) != null) {
+                    if (g != null && g.moved && !g.draw && g.grab == null && g.ruler == null) undoGesture(g, "the system cancelled the touch as a palm")
+                    touchReset(x, y, false)
+                }
             }
             else -> drop("the mouse was cancelled")
         }
@@ -1780,7 +1811,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     }
 
     /** End the stroke whose lift was waiting for its light end. */
-    private fun finishLift() {
+    internal fun finishLift() {
         val r = liftTimer ?: return
         liftTimer = null
         handler.removeCallbacks(r)
@@ -1952,6 +1983,52 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
 
     private fun penActive() = penDown || mono() - penSeen < palmMs
 
+    /** Note a touch's contact size. A contact far bigger than a fingertip is a hand or a sleeve,
+     *  and one that swells or shrinks a lot while it is down is a hand rolling onto or off the
+     *  glass: its middle wanders without anything having been moved on purpose. The first is set
+     *  aside as a palm, the second is never taken for a flick. (A screen that does not report
+     *  sizes gives 0, and nothing is decided by it.) */
+    private fun touchSize(id: Int, size: Double) {
+        if (size <= 0.0 || id !in touches) return
+        val first = touchSizes.getOrPut(id) { size }
+        val g = tg
+        if (size > PALM_CONTACT_DP) {
+            log("touch $id is ${size.roundToInt()} dp across: a palm, set aside")
+            touches.remove(id)
+            touchSizes.remove(id)
+            rejected.add(id)
+            if (g != null && g.draw && g.grab == null) {
+                g.draw = false
+                drop("the finger drawing is a palm")
+            }
+            if (g != null && g.moved && !g.draw && g.grab == null && g.ruler == null) undoGesture(g, "a palm-sized contact")
+            val (cx, cy) = g?.let { Pair(it.cx, it.cy) } ?: Pair(0.0, 0.0)
+            touchReset(cx, cy, false)
+            return
+        }
+        if (g != null && !g.unsteady && max(size, first) > 1.8 * min(size, first) && max(size, first) - min(size, first) > 8) {
+            g.unsteady = true
+            if (TRIAL) log("touch $id changed size ${first.roundToInt()} -> ${size.roundToInt()} dp: no flick from it")
+        }
+    }
+
+    /** Put the view back where it was when a touch gesture began: it was a hand, not a finger. */
+    private fun undoGesture(g: TouchGesture, why: String) {
+        stopFling()
+        val state = g.seen[0].second
+        g.moved = false
+        if (pull != 0.0) {
+            pull = 0.0
+            invalidate()
+        }
+        if (state[0] == zoom && state[1] == h() && state[2] == v()) return
+        log("view put back: $why")
+        zoom = state[0]
+        relayout()
+        configureAdj(state[1], state[2])
+        zoomChanged()
+    }
+
     private fun touchDown(id: Int, x: Double, y: Double) {
         requestFocus()
         if (penActive()) {
@@ -2020,7 +2097,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             }
             if (old != null && old.moved && !old.draw && d.pages.size == pages && rest(old.origin, old.track)) {
                 // side by side, the page in view comes to rest in the middle
-            } else if (old != null && old.moved && !old.draw && old.n == 1 && lifted) {
+            } else if (old != null && old.moved && !old.draw && old.n == 1 && lifted && !old.unsteady && old.travel >= FLICK_TRAVEL_DP) {
                 startFling(old.track)
             } else if (old != null && lifted && !old.moved && !old.draw && old.ruler == null && old.n == 1) {
                 fingerTap(x, y)
@@ -2176,8 +2253,9 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             pulled(if (abs(over) > 1) over else 0.0)
         }
         val now = mono()
+        g.track.lastOrNull()?.let { g.travel += hypot(cx - it[1], cy - it[2]) }
         g.track.add(doubleArrayOf(now.toDouble(), cx, cy))
-        while (g.track.size > 6) g.track.removeAt(0)
+        while (g.track.size > 8) g.track.removeAt(0)
         if (now - g.seen.last().first > 40) {   // the view at intervals, for the palm to be undone to
             g.seen.add(Pair(now, doubleArrayOf(zoom, h(), v())))
             while (g.seen.size > 2 && now - g.seen[1].first > 350) g.seen.removeAt(0)
@@ -2250,11 +2328,31 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     private fun startFling(track: List<DoubleArray>) {
         val last = track.last()
         val t1 = last[0]
-        val first = track.firstOrNull { t1 - it[0] < 90 } ?: track[0]
-        if (mono() - t1 > 60 || t1 - first[0] < 8) return
-        var vx = (first[1] - last[1]) / (t1 - first[0]) * 1000
-        var vy = (first[2] - last[2]) / (t1 - first[0]) * 1000
-        if (hypot(vx, vy) < 250) return
+        if (mono() - t1 > 60) return
+        // The speed is fitted to the last moments of the drag (least squares), not taken from its
+        // two ends: as a contact lifts its middle can jump, and one such jump alone once made a
+        // brush of the hand throw the page far away. A last step out of all proportion to the
+        // ones before it is that jump, and is left out.
+        var pts = track.filter { t1 - it[0] < 100 }
+        if (pts.size >= 4) {
+            val steps = (1 until pts.size).map { hypot(pts[it][1] - pts[it - 1][1], pts[it][2] - pts[it - 1][2]) }
+            val before = steps.dropLast(1).average()
+            if (steps.last() > 12 && steps.last() > 3 * before) pts = pts.dropLast(1)
+        }
+        if (pts.size < 3 || pts.last()[0] - pts[0][0] < 16) return
+        val tm = pts.sumOf { it[0] } / pts.size
+        val xm = pts.sumOf { it[1] } / pts.size
+        val ym = pts.sumOf { it[2] } / pts.size
+        val tt = pts.sumOf { (it[0] - tm) * (it[0] - tm) }
+        if (tt <= 0) return
+        var vx = -pts.sumOf { (it[0] - tm) * (it[1] - xm) } / tt * 1000
+        var vy = -pts.sumOf { (it[0] - tm) * (it[2] - ym) } / tt * 1000
+        val speed = hypot(vx, vy)
+        if (speed < 250) return
+        if (speed > FLICK_MAX_SPEED) {
+            vx *= FLICK_MAX_SPEED / speed
+            vy *= FLICK_MAX_SPEED / speed
+        }
         var prev = 0L
         val tick = object : Runnable {
             override fun run() {

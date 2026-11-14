@@ -39,8 +39,17 @@ object Pictures : ImageCodec {
     @Synchronized
     fun bitmap(data: ImageData): Bitmap? = cache[data] ?: runCatching {
         val bytes = data.source.bytes()
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        // A picture from elsewhere may be far larger than any screen shows it: it is read at
+        // most about 4096 pixels on its longer side (a power of two smaller), so that one
+        // camera photo cannot take all the memory there is.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (max(bounds.outWidth, bounds.outHeight) / sample > PICTURE_MAX_SIDE) sample *= 2
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }.getOrNull()?.also { cache[data] = it }
+
+    private const val PICTURE_MAX_SIDE = 4096
 
     override fun rotate(png: ByteArray, k: Int): ByteArray {
         val src = BitmapFactory.decodeByteArray(png, 0, png.size) ?: return png
