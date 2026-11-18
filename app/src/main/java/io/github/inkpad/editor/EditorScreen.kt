@@ -543,10 +543,10 @@ fun EditorScreen(app: AppModel, session: EditorSession) {
             }
         }
     }
-    ImmersiveWhileEditing()
+    if (app.settings["immersive"] != false) ImmersiveWhileEditing()
 }
 
-/** While a notebook is open the navigation bar steps aside: a hand writing near the bottom edge
+/** While a notebook is open the system bars step aside: a hand writing near the bottom edge
  *  then only brings the bar back for a moment, and it takes a second swipe to leave the app.
  *  (Android lets no app keep the home gesture to itself; this is what it allows.) */
 @Composable
@@ -558,8 +558,10 @@ private fun ImmersiveWhileEditing() {
                 .filterIsInstance<android.app.Activity>().firstOrNull()?.window
         val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, it.decorView) }
         controller?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller?.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
-        onDispose { controller?.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars()) }
+        // Both bars, as games do: some systems (vivo's among them) leave the gesture bar in place
+        // when only the navigation bar is asked to go.
+        controller?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        onDispose { controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
     }
 }
 

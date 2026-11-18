@@ -64,6 +64,14 @@ const val BOARD_MIN_ZOOM = 0.04
 /** How long before a touch the pen is looked for writing lightly (see lightStart). */
 /** A touch contact wider than this (dp, about 17 mm) is no fingertip: a palm, a sleeve. */
 const val PALM_CONTACT_DP = 110.0
+/** The same told by MotionEvent.getSize, the contact's size as a fraction of the largest the
+ *  screen reports for a finger. On the vivo Pad a fingertip reads 0.13–0.5, a finger pressed hard
+ *  up to 0.9, and the side of the hand goes past 1 (its reading runs over the screen's own top). */
+const val PALM_SIZE = 0.98
+/** A touch that comes down at least this big (a pressed finger, or a hand rolling onto the glass)
+ *  moves nothing for [BIG_TOUCH_HOLD_MS]: time enough for a hand to show itself as one. */
+const val BIG_TOUCH_SIZE = 0.6
+const val BIG_TOUCH_HOLD_MS = 120L
 /** How far the fingers must have gone, all told, for letting go to throw the page on. */
 const val FLICK_TRAVEL_DP = 40.0
 /** The fastest a flick throws the page (dp per second). */
@@ -1329,8 +1337,10 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     private var pan: DoubleArray? = null        // the middle button moving the page
     private var barStart = Pair(0.0, 0.0)
     internal val touches = LinkedHashMap<Int, Pair<Double, Double>>()
-    /** The size of each touch's contact (dp, the longer axis) as it came down: see [touchSize]. */
-    private val touchSizes = HashMap<Int, Double>()
+    /** Each touch's contact (see [touchSize]): when it came down, its size then (getSize), and
+     *  the largest and smallest it has been. */
+    private class Contact(val at: Long, val first: Double, var most: Double, var least: Double)
+    private val touchSizes = HashMap<Int, Contact>()
     private val rejected = HashSet<Int>()
     internal var tg: TouchGesture? = null
     private var fling: Runnable? = null
@@ -1490,8 +1500,9 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         when (kindOf(e, i)) {
             "pen" -> penDownEvent(e, i, x, y)
             "touch" -> {
+                touchSizes.remove(e.getPointerId(i))   // a new touch, whatever an earlier one with its id was
                 touchDown(e.getPointerId(i), x, y)
-                touchSize(e.getPointerId(i), e.getTouchMajor(i) / dev)
+                touchSize(e.getPointerId(i), e.getSize(i).toDouble(), e.getTouchMajor(i) / dev)
             }
             else -> mouseDownEvent(e, i, x, y)
         }
@@ -1508,7 +1519,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             }
             "touch" -> if (id in touches) {
                 touches[id] = Pair(x, y)
-                touchSize(id, e.getTouchMajor(i) / dev)
+                touchSize(id, e.getSize(i).toDouble(), e.getTouchMajor(i) / dev)
             }
             else -> mouseMove(e, i, x, y)
         }
@@ -1983,17 +1994,20 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
 
     private fun penActive() = penDown || mono() - penSeen < palmMs
 
-    /** Note a touch's contact size. A contact far bigger than a fingertip is a hand or a sleeve,
-     *  and one that swells or shrinks a lot while it is down is a hand rolling onto or off the
-     *  glass: its middle wanders without anything having been moved on purpose. The first is set
-     *  aside as a palm, the second is never taken for a flick. (A screen that does not report
-     *  sizes gives 0, and nothing is decided by it.) */
-    private fun touchSize(id: Int, size: Double) {
-        if (size <= 0.0 || id !in touches) return
-        val first = touchSizes.getOrPut(id) { size }
+    /** Note a touch's contact size ([size] from getSize, [major] the longer axis in dp, whichever
+     *  the screen reports sensibly). A contact bigger than any finger is a hand or a sleeve: it is
+     *  set aside as a palm and what it did to the view is undone. One that swells or shrinks a lot
+     *  while it is down is a hand rolling onto or off the glass, its middle wandering without
+     *  anything having been moved on purpose: it is never taken for a flick. (A screen that does
+     *  not report sizes gives 0, and nothing is decided by it.) */
+    private fun touchSize(id: Int, size: Double, major: Double) {
+        if (id !in touches || (size <= 0.0 && major <= 0.0)) return
+        val c = touchSizes.getOrPut(id) { Contact(mono(), size, size, size) }
+        c.most = max(c.most, size)
+        c.least = min(c.least, size)
         val g = tg
-        if (size > PALM_CONTACT_DP) {
-            log("touch $id is ${size.roundToInt()} dp across: a palm, set aside")
+        if (size >= PALM_SIZE || major > PALM_CONTACT_DP) {
+            log("touch $id is a palm (size ${"%.2f".format(size)}, ${major.roundToInt()} dp): set aside")
             touches.remove(id)
             touchSizes.remove(id)
             rejected.add(id)
@@ -2006,10 +2020,18 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             touchReset(cx, cy, false)
             return
         }
-        if (g != null && !g.unsteady && max(size, first) > 1.8 * min(size, first) && max(size, first) - min(size, first) > 8) {
+        if (g != null && !g.unsteady && c.least > 0 && c.most > 1.8 * c.least && c.most - c.least > 0.25) {
             g.unsteady = true
-            if (TRIAL) log("touch $id changed size ${first.roundToInt()} -> ${size.roundToInt()} dp: no flick from it")
+            if (TRIAL) log("touch $id changed size ${"%.2f".format(c.least)} -> ${"%.2f".format(c.most)}: no flick from it")
         }
+    }
+
+    /** A big touch only just come down: the page waits a moment before following it (it may be a
+     *  hand rolling on, about to show itself as one). A finger pressed hard is followed after that,
+     *  catching up with where it has gone. */
+    private fun heldBack(): Boolean {
+        val now = mono()
+        return touchSizes.entries.any { (id, c) -> id in touches && c.most >= BIG_TOUCH_SIZE && now - c.at < BIG_TOUCH_HOLD_MS }
     }
 
     /** Put the view back where it was when a touch gesture began: it was a hand, not a finger. */
@@ -2212,6 +2234,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
             move(cx, cy, 0.5)
             return
         }
+        if (heldBack()) return
         if (!g.moved) {
             // A small dead zone, so that a brush of the hand does not move the page.
             if (hypot(cx - g.cx, cy - g.cy) < 8 && abs(sp - g.span) < 8) return

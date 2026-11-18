@@ -120,6 +120,7 @@ fun SettingsScreen(app: AppModel, close: () -> Unit) {
                             Triple("crosshair", "显示十字光标", null),
                             Triple("mouse_hand", "有手写笔时鼠标不书写", "用过手写笔之后，鼠标只用来移动页面"),
                             Triple("scrollbars", "显示滚动条", null),
+                            Triple("immersive", "编辑时隐藏系统栏", "从屏幕底部上滑一次只会叫出小横条，再滑一次才离开应用，书写时不易误触"),
                         )) {
                             SettingRow(tr(title), sub?.let { tr(it) }) { Switch(st[key] == true) { set(key, it) } }
                         }
