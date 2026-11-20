@@ -156,7 +156,11 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     internal var op: Op? = null
     internal var sel: Selection? = null
     internal var hidden: MutableSet<Item>? = null
-    internal var clip: List<Item> = emptyList()
+    /** What was copied: kept by the app, not by this canvas, so that it can be pasted into
+     *  another notebook (each notebook has a canvas of its own). */
+    internal var clip: List<Item>
+        get() = Clipboard.items
+        set(v) { Clipboard.items = v }
     internal val handler = Handler(Looper.getMainLooper())
 
     // Tool configuration, written by the editor.
@@ -200,7 +204,8 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     internal var pressAt = Pair(0.0, 0.0)
     internal var hasPen = false
     internal var hover: Pair<Double, Double>? = null
-    internal var typicalPressure = 0.5   // a running mean of the pen's pressure, stroke by stroke
+    internal var typicalPressure = 0.5   // a running mean of the pen's pressure as it comes down, stroke by stroke
+    internal var downPressure = -1.0     // the pressure the stroke under way came down with
     internal val marks = ArrayList<Pair<Page, Box>>()   // search hits: page, box in page points
     internal var markAt = -1
     internal val laserTrails = ArrayList<Pair<Page, MutableList<DoubleArray>>>()
@@ -1660,7 +1665,9 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
         // whether they are is known once the line has a direction.
         lightPre = if (tool in LIGHT_ENDS_TOOLS && !erase) lightStart(e.eventTime, x, y) else emptyList()
         lightFrom = Pair(x, y)
-        down(x, y, penPressure(e.getPressure(i).toDouble(), e.eventTime), erase)
+        val pressed = penPressure(e.getPressure(i).toDouble(), e.eventTime)
+        downPressure = pressed
+        down(x, y, pressed, erase)
         log("pen down at ${x.roundToInt()},${y.roundToInt()} -> ${op?.kind ?: "nothing (text, a selection grabbed, or outside every page)"}")
     }
 

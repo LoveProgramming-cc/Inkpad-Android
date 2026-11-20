@@ -137,7 +137,10 @@ class EditorState(val app: AppModel, val session: EditorSession) : CanvasHost {
     var textAsk by mutableStateOf<Triple<Pair<Double, Double>, String?, (String?) -> Unit>?>(null)
     var prompt by mutableStateOf<Triple<String, String, (String?) -> Unit>?>(null)
     var confirm by mutableStateOf<Triple<String, String, () -> Unit>?>(null)
-    var pageClip: io.github.inkpad.core.Page? = null
+    /** A copied page, kept by the app so that it can be pasted into another notebook. */
+    var pageClip: io.github.inkpad.core.Page?
+        get() = Clipboard.page
+        set(v) { Clipboard.page = v }
     var paperFor by mutableStateOf<PaperRequest?>(null)
     var exportAsk by mutableStateOf<ExportRequest?>(null)
     var coverAsk by mutableStateOf(false)

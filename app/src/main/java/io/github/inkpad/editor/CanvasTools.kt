@@ -66,6 +66,10 @@ class Op(var kind: String, val page: Page?, val i: Int) {
     var at = Pair(0.0, 0.0)
     var slack = 0.0
     var live = false
+    // A text box taken by its left (-1) or right (1) edge: its lines are made wider or narrower,
+    // the text flowing anew in them, and the box takes whatever shape that gives.
+    var reflow = 0
+    var reflowed: Text? = null
 }
 
 /** A picture of part of a page, and where it is (page points). */
@@ -220,6 +224,12 @@ private fun PageCanvas.snapLasso(c: Canvas, o: Op, i: Int) {
 }
 
 private fun PageCanvas.snapMove(c: Canvas, o: Op, i: Int) {
+    o.reflowed?.let {
+        c.save()
+        drawItem(c, pageEnv(c, i), it)
+        c.restore()
+        return
+    }
     val raster = o.raster ?: return
     val (ox, oy) = o.origin
     val (rx, ry, rw, rh) = raster.rect
@@ -474,6 +484,12 @@ internal fun PageCanvas.move(x0: Double, y0: Double, pressure: Double) {
             o.live = true
         }
         val (px, py) = toPage(i, x, y)
+        if (o.reflow != 0) {
+            val t = sel?.items?.singleOrNull() as? Text ?: return
+            o.reflowed = reflowText(t, o.reflow, px - o.start.first)
+            invalidate()
+            return
+        }
         if (o.scaling) {
             val (ox, oy) = o.origin
             val (ssx, ssy) = o.start
@@ -660,11 +676,12 @@ internal fun PageCanvas.up(x: Double, y: Double) {
     when (o.kind) {
         "stroke" -> {
             val item = o.item as Stroke
-            if (src == "pen" && item.pts.size > 3) {
-                // How hard this hand writes, for the mark under a hovering pen.
-                val mean = item.pts.sumOf { it[2] } / item.pts.size
-                typicalPressure += (mean - typicalPressure) * 0.3
+            if (src == "pen" && item.pts.size > 3 && downPressure >= 0) {
+                // How hard this hand presses as the pen comes down, for the mark under a hovering
+                // pen: that is where the next stroke begins, not the width it swells to later.
+                typicalPressure += (downPressure - typicalPressure) * 0.3
             }
+            downPressure = -1.0
             if (penStab > 0 && item.tool != "hl" && item.tool != "tape" && !o.fixed && o.rule == null) {
                 // Catch the lagging stabilised line up with where the pen lifted.
                 val (px, py) = toPage(o.i, x, y)
@@ -716,7 +733,11 @@ internal fun PageCanvas.up(x: Double, y: Double) {
             hidden = null
             val s = sel ?: return
             val olds = s.items
-            if (abs(o.s - 1) > 1e-3 || hypot(o.dx, o.dy) * zoom > 1) {
+            val reflowed = o.reflowed
+            if (reflowed != null) {
+                d.replaceItems(page!!, olds, listOf(reflowed))
+                select(page, listOf(reflowed))
+            } else if (abs(o.s - 1) > 1e-3 || hypot(o.dx, o.dy) * zoom > 1) {
                 val news = olds.map { it.transformed(o.s, o.origin.first, o.origin.second, o.dx, o.dy) }
                 if (o.copy) d.addItems(page!!, news)   // the originals stay where they were
                 else d.replaceItems(page!!, olds, news)
@@ -918,6 +939,10 @@ internal fun PageCanvas.grabSelection(x: Double, y: Double, reach: Double = 7.0)
             origin = Pair(x0 + x1 - px.coerceIn(x0, x1), y0 + y1 - py.coerceIn(y0, y1))
         }
     }
+    // One text box taken by its left or right edge: the lines get wider or narrower instead.
+    val text = s.items.singleOrNull() as? Text
+    val reflow = if (text == null || !scaling || !(by0 + inner(r, bx0, bx1, by0, by1) < py && py < by1 - inner(r, bx0, bx1, by0, by1))) 0
+        else if (px <= (x0 + x1) / 2) -1 else 1
     val items = s.items
     // Lift the items out of the page raster and carry them as one picture.
     val layerRaster = raster(i, s.bbox) { c, env -> for (it in items) drawItem(c, env, it) }
@@ -930,10 +955,27 @@ internal fun PageCanvas.grabSelection(x: Double, y: Double, reach: Double = 7.0)
         it.raster = layerRaster
         it.at = Pair(x, y)
         it.slack = if (reach > 7) 8.0 else 0.0
+        if (reflow != 0) {
+            it.scaling = false
+            it.reflow = reflow
+        }
     }
     host.selectionChanged()
     invalidate()
     return true
+}
+
+/** How far in from the outline the middle of a selection box begins (see [grabSelection]). */
+private fun inner(r: Double, bx0: Double, bx1: Double, by0: Double, by1: Double) = minOf(r, (bx1 - bx0) / 4, (by1 - by0) / 4)
+
+/** The text box [t] with its lines made [dx] wider at its right edge (side 1) or its left (-1). */
+private fun reflowText(t: Text, side: Int, dx: Double): Text {
+    val pad = t.x - t.bbox[0]
+    val now = if (t.wrap > 0) t.wrap else t.bbox[2] - t.bbox[0] - 2 * pad
+    val least = t.size * 2   // room for a letter or two on a line
+    val wrap = max(least, now + side * dx)
+    val x = if (side < 0) t.x + (now - wrap) else t.x
+    return Text(x, t.y, t.text, t.size, t.color, wrap, t.bg)
 }
 
 private fun <T> identitySetOf(of: Collection<T>): MutableSet<T> =
@@ -1063,7 +1105,9 @@ fun PageCanvas.paste(at: Pair<Double, Double>? = null): Boolean {
     }
     val page = d.pages[currentPageIndex()]
     val items = clip.map { it.transformed(1.0, 0.0, 0.0, 14.0, 14.0) }
-    clip = items
+    // The next paste goes a little further along; what is kept is a copy, not the pasted items
+    // themselves, which may be changed or deleted on the page.
+    clip = items.map { it.transformed(1.0, 0.0, 0.0, 0.0, 0.0) }
     d.addItems(page, items)
     select(page, items)
     return true
