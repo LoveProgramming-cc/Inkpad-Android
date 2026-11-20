@@ -378,6 +378,7 @@ private fun PageCanvas.drawPull(c: Canvas) {
 private fun PageCanvas.selBox(): Box {
     val (x0, y0, x1, y1) = sel!!.bbox
     val o = op
+    o?.reflowed?.takeIf { o.kind == "move" }?.let { return it.bbox.copyOf() }   // the box follows the rewrapped lines
     if (o != null && o.kind == "move") {
         val (ox, oy) = o.origin
         return doubleArrayOf(ox + (x0 - ox) * o.s + o.dx, oy + (y0 - oy) * o.s + o.dy, ox + (x1 - ox) * o.s + o.dx, oy + (y1 - oy) * o.s + o.dy)
