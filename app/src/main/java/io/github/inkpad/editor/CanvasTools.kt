@@ -137,7 +137,7 @@ internal fun PageCanvas.drawOverlay(c: Canvas) {
     c.save()
     c.scale(dev.toFloat(), dev.toFloat())
     if (sel != null) snapSelection(c)
-    if (hover != null && op == null && !penDown) drawHover(c)
+    if (hover != null && op == null && !penDown && (penUpAt == 0L || android.os.SystemClock.uptimeMillis() - penUpAt >= HOVER_DOT_AFTER_MS)) drawHover(c)
     if (laserTrails.isNotEmpty() || laserDot != null) drawLaser(c)
     if (ruler != null) drawRuler(c)
     if (pull != 0.0) drawPull(c)

@@ -89,6 +89,16 @@ const val LIGHT_START_COS = 0.9
 const val LIGHT_ENDS_COS = 0.82
 /** The sideways speed, in dp a second, at which a "hovering" pen is taken to be writing. */
 const val LIGHT_ENDS_SPEED = 90.0
+
+/** The fastest a hovering pen is taken to move, in dp a second. Just after a vivo Pencil 3 comes
+ *  into range it reports a few samples tens of millimetres apart every 4 ms, often over strokes
+ *  just written; a hand waving the pen goes some hundreds of dp a second. */
+const val HOVER_MAX_SPEED = 3000.0
+
+/** How long after the pen last lifted the hover dot stays away: between the strokes of
+ *  handwriting it is no help, only something that moves about. It comes back sooner once the
+ *  pen has left the screen's reach. */
+const val HOVER_DOT_AFTER_MS = 400L
 /** The tools whose strokes get their light ends back. */
 val LIGHT_ENDS_TOOLS = setOf("pen", "hl", "tape", "eraser")
 const val BG_KEEP = 8               // PDF page backgrounds remembered after they scroll out of view
@@ -1332,6 +1342,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     internal var penDown = false
     private var penId = -1
     private var penDownAt = 0L
+    internal var penUpAt = 0L   // when the pen last lifted; 0 once it has gone out of reach since
     internal var penAt = Pair(0.0, 0.0)
     private var penSeen = -1_000_000L
     private var pst = PenState()
@@ -1544,6 +1555,7 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
                 penAt = Pair(x, y)
                 move(x, y, lastPressure())
                 penDown = false
+                penUpAt = mono()
                 log("pen up, was drawing: ${op?.kind}, ${(op?.item as? io.github.inkpad.core.Stroke)?.pts?.size ?: 0} points")
                 if (op?.kind == "stroke" || op?.kind == "erase") liftLater(e.eventTime, x, y) else up(x, y)
             }
@@ -1703,15 +1715,28 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
     private var liftT = 0.0
     private var liftPoint = Pair(0.0, 0.0)
 
-    private fun noteHover(e: MotionEvent) {
+    /** The pen's last hover sample, believed or not, to judge the next one by. */
+    private var hoverLast: Triple<Double, Double, Double>? = null
+
+    /** Takes in the hover samples the pen could really have given; returns where the pen is,
+     *  or null if none of them could be believed. */
+    private fun noteHover(e: MotionEvent): Pair<Double, Double>? {
+        var at: Pair<Double, Double>? = null
         val add = { t: Long, x: Float, y: Float ->
             val pt = Triple(t.toDouble(), x / dev, y / dev)
-            hoverTrail.addLast(pt)
-            if (liftTimer != null) lightEnd(pt)
+            val last = hoverLast
+            hoverLast = pt
+            // A sample is believed when the pen could have got there from the one before.
+            if (last != null && hypot(pt.second - last.second, pt.third - last.third) / max(0.004, (pt.first - last.first) / 1000) <= HOVER_MAX_SPEED) {
+                hoverTrail.addLast(pt)
+                if (liftTimer != null) lightEnd(pt)
+                at = Pair(pt.second, pt.third)
+            }
         }
         for (k in 0 until e.historySize) add(e.getHistoricalEventTime(k), e.getHistoricalX(k), e.getHistoricalY(k))
         add(e.eventTime, e.x, e.y)
         while (hoverTrail.isNotEmpty() && e.eventTime - hoverTrail.first().first > LIGHT_ENDS_MS * 2) hoverTrail.removeFirst()
+        return at
     }
 
     /** The hover samples just before a pen came down at (x, y) that moved at writing speed, oldest
@@ -1845,17 +1870,25 @@ class PageCanvas(context: Context, val host: CanvasHost) : View(context) {
                 if (kind == "pen") {
                     hasPen = true
                     penSeen = mono()
-                    noteHover(e)
+                    if (e.actionMasked == MotionEvent.ACTION_HOVER_ENTER) hoverLast = null
+                    // The dot stays where it was until the pen is somewhere it could really be.
+                    noteHover(e)?.let { hover = it }
+                } else {
+                    hover = if (hasPen && kind == "mouse") Pair(e.x / dev, e.y / dev) else null
                 }
-                hover = if (kind == "pen" || (hasPen && kind == "mouse")) Pair(e.x / dev, e.y / dev) else null
             }
             MotionEvent.ACTION_HOVER_EXIT -> {
                 hover = null
+                hoverLast = null
+                penUpAt = 0L
                 hoverTrail.clear()
                 finishLift()
             }
         }
         if (hover != null || was != null) invalidate()
+        // The dot comes back once writing has paused, even with the pen held still.
+        val wait = penUpAt + HOVER_DOT_AFTER_MS - mono()
+        if (hover != null && penUpAt != 0L && wait > 0) postInvalidateDelayed(wait + 10)
         return true
     }
 
